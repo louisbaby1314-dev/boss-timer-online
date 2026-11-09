@@ -1,0 +1,2657 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Boss 刷新 · 计时器</title>
+    <meta name="theme-color" content="#0f172a">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Boss计时">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/svg+xml" href="icon.svg">
+    <link rel="apple-touch-icon" href="icon-192.png">
+
+    <style>
+:root {
+  --ink: #0e0f13;
+  --ink-soft: #15171d;
+  --ink-dim: #1a1d24;
+  --ink-faint: #232833;
+  --line: #2a2f3a;
+  --line-soft: #232833;
+  --accent: #3b82f6;
+  --accent-deep: #2563eb;
+  --accent-soft: rgba(59,130,246,.16);
+  --green: #4ade80;
+  --green-soft: rgba(74,222,128,.14);
+  --orange: #fbbf24;
+  --orange-soft: rgba(245,158,11,.14);
+  --red: #e08f8f;
+  --red-soft: rgba(233,96,96,.12);
+  --violet: #c4b5fd;
+  --violet-soft: rgba(167,139,250,.14);
+  --gold: #d4af5f;
+  --text: #e6e8ee;
+  --text-dim: #8b93a3;
+  --text-faint: #5a6170;
+  --card: #1a1d24;
+  --card-hover: #20242d;
+  --radius: 14px;
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.3), 0 1px 3px rgba(0,0,0,.35);
+  --shadow-md: 0 8px 28px -8px rgba(0,0,0,.55);
+  --shadow-lg: 0 28px 70px -16px rgba(0,0,0,.7);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif; }
+
+body {
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  padding: 14px 10px 24px;
+  color: #e6e8ee;
+  background:
+    radial-gradient(1100px 520px at 85% -10%, rgba(37,99,235,.18), transparent 60%),
+    radial-gradient(900px 480px at -10% 20%, rgba(245,158,11,.10), transparent 55%),
+    radial-gradient(800px 500px at 50% 115%, rgba(14,165,233,.10), transparent 60%),
+    linear-gradient(180deg, #111318 0%, #0e0f13 100%);
+  background-attachment: fixed;
+}
+
+.app {
+  max-width: 1300px; width: 100%;
+  border-radius: 22px;
+  padding: 16px 20px 20px;
+  background: rgba(22,25,33,.92);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255,255,255,.07);
+  box-shadow: var(--shadow-md);
+  transition: background .35s ease, box-shadow .35s ease;
+  position: relative;
+  overflow: hidden;
+}
+.app::before {
+  content: "";
+  position: absolute; inset: 0 0 auto 0; height: 4px;
+  background: linear-gradient(90deg, #2563eb, #7c3aed, #0ea5e9, #2563eb);
+  background-size: 300% 100%;
+  animation: appShine 12s linear infinite;
+  opacity: .9;
+}
+@keyframes appShine { 0% { background-position: 0% 0; } 100% { background-position: 300% 0; } }
+
+/* ===== 新区（蓝） / 老区（橙） 双色调 ===== */
+.app.mode-new {
+  background: linear-gradient(180deg, rgba(37,99,235,.14) 0%, rgba(22,25,33,.94) 46%);
+  border-color: rgba(96,165,250,.22);
+}
+.app.mode-old {
+  background: linear-gradient(180deg, rgba(245,158,11,.12) 0%, rgba(22,25,33,.94) 46%);
+  border-color: rgba(251,191,36,.22);
+}
+.app.mode-new::before {
+  background: linear-gradient(90deg, #2563eb, #60a5fa, #3b82f6, #2563eb);
+}
+.app.mode-old::before {
+  background: linear-gradient(90deg, #d97706, #fbbf24, #f59e0b, #d97706);
+}
+
+/* ===== Header ===== */
+.header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; margin-bottom: 14px; gap: 8px; }
+.header h1 {
+  font-size: 20px; font-weight: 750; color: #e6e8ee;
+  display: flex; align-items: center; gap: 8px; letter-spacing: .2px;
+}
+.header h1 small { font-weight: 750; }
+.top-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+
+.clock-badge {
+  background: linear-gradient(135deg, #2b2f3a, #171a21);
+  color: #dde1ea;
+  border: 1px solid #2a2f3a;
+  padding: 5px 14px; border-radius: 60px;
+  font-weight: 600; font-size: 14px;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0,0,0,.4);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .5px;
+}
+
+/* ===== Buttons ===== */
+.btn {
+  background: #1f242e;
+  border: 1px solid #2e3442;
+  padding: 5px 14px; border-radius: 60px;
+  font-weight: 600; font-size: 12px; color: #dde1ea;
+  cursor: pointer; transition: all .18s ease;
+  display: inline-flex; align-items: center; gap: 5px;
+  white-space: nowrap;
+  box-shadow: var(--shadow-sm);
+}
+.btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px -2px rgba(0,0,0,.45); border-color: #4a5264; }
+.btn:active { transform: translateY(0) scale(.97); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.btn-primary { background: linear-gradient(135deg, #1d4ed8, #3b82f6); border-color: transparent; color: white; box-shadow: 0 4px 14px -4px rgba(59,130,246,.55); }
+.app.mode-old .btn-primary { background: linear-gradient(135deg, #d97706, #f59e0b); color: #1a1508; box-shadow: 0 4px 14px -4px rgba(245,158,11,.55); }
+.btn-primary:hover { filter: brightness(1.1); }
+.btn-outline { background: transparent; box-shadow: none; }
+.btn-outline:hover { background: #232833; }
+.btn-success { background: linear-gradient(135deg, #15803d, #22c55e); border-color: transparent; color: white; box-shadow: 0 4px 14px -4px rgba(34,197,94,.5); }
+.btn-success:hover { filter: brightness(1.1); }
+.btn-warning { background: linear-gradient(135deg, #b45309, #f59e0b); border-color: transparent; color: white; box-shadow: 0 4px 14px -4px rgba(245,158,11,.5); }
+.btn-warning:hover { filter: brightness(1.1); }
+.btn-danger { background: linear-gradient(135deg, #b91c1c, #ef4444); border-color: transparent; color: white; box-shadow: 0 4px 14px -4px rgba(239,68,68,.5); }
+.btn-danger:hover { filter: brightness(1.1); }
+.btn-info { background: linear-gradient(135deg, #1e40af, #3b82f6); border-color: transparent; color: white; box-shadow: 0 4px 14px -4px rgba(59,130,246,.5); }
+.btn-info:hover { filter: brightness(1.1); }
+
+.btn-tab-new { border-color: #3b82f6; color: #60a5fa; background: rgba(59,130,246,.10); }
+.btn-tab-new.active { background: linear-gradient(135deg, #1d4ed8, #3b82f6); border-color: transparent; color: white; box-shadow: 0 4px 14px -4px rgba(59,130,246,.6); }
+.btn-tab-new:hover:not(.active) { background: rgba(59,130,246,.18); transform: translateY(-1px); }
+.btn-tab-old { border-color: #f59e0b; color: #fbbf24; background: rgba(245,158,11,.10); }
+.btn-tab-old.active { background: linear-gradient(135deg, #d97706, #f59e0b); border-color: transparent; color: #1a1508; box-shadow: 0 4px 14px -4px rgba(245,158,11,.6); }
+.btn-tab-old:hover:not(.active) { background: rgba(245,158,11,.18); transform: translateY(-1px); }
+
+.btn-tz {
+  border: 1px solid #7c6fd0; color: #c4b5fd; background: rgba(167,139,250,.10);
+  font-size: 11px; padding: 4px 11px; border-radius: 60px;
+  cursor: pointer; font-weight: 650; transition: all .18s ease;
+}
+.btn-tz.active { background: linear-gradient(135deg, #6d28d9, #8b5cf6); color: white; border-color: transparent; box-shadow: 0 3px 10px -3px rgba(139,92,246,.5); }
+.btn-tz:hover:not(.active) { background: rgba(167,139,250,.18); transform: translateY(-1px); }
+
+.btn-sm {
+  padding: 3px 9px; font-size: 11px; border-radius: 40px;
+  background: #1f242e; border: 1px solid #2e3442; cursor: pointer;
+  transition: all .15s ease; font-weight: 600; white-space: nowrap; line-height: 1.4;
+  color: #dde1ea;
+  box-shadow: var(--shadow-sm);
+}
+.btn-sm:hover { transform: translateY(-1px); box-shadow: 0 3px 8px -2px rgba(0,0,0,.4); }
+.btn-sm.kill { border-color: #16a34a; color: #4ade80; }
+.btn-sm.kill:hover { background: var(--green-soft); border-color: #4ade80; color: #4ade80; }
+.btn-sm.delay { border-color: #d97706; color: #fbbf24; }
+.btn-sm.delay:hover { background: var(--orange-soft); border-color: #fbbf24; color: #fbbf24; }
+.btn-sm.remind { border-color: #3b82f6; color: #60a5fa; }
+.btn-sm.remind:hover { background: var(--accent-soft); border-color: #60a5fa; }
+.btn-sm.reminded { border-color: #3a4152; color: #8b93a3; background: #232833; cursor: default; }
+.btn-sm.danger { border-color: #d98282; color: #e08f8f; }
+.btn-sm.danger:hover { background: var(--red-soft); border-color: #e08f8f; color: #e08f8f; }
+
+/* ===== Toolbar ===== */
+.toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  margin-bottom: 12px; padding: 6px 2px 12px;
+  border-bottom: 1px solid rgba(255,255,255,.07);
+}
+.toolbar .badge-count {
+  background: linear-gradient(135deg, #2b2f3a, #171a21);
+  color: #e6e8ee;
+  border: 1px solid #2a2f3a;
+  padding: 3px 12px; border-radius: 40px;
+  font-size: 12px; font-weight: 650;
+  box-shadow: 0 2px 8px rgba(0,0,0,.35);
+}
+.toolbar .right-group { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+
+/* ===== Reminder bar ===== */
+.reminder-bar {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+  gap: 8px 16px;
+  background: rgba(21,23,29,.82);
+  border-radius: 14px; padding: 10px 18px; margin-bottom: 14px;
+  border: 1px solid #2a2f3a;
+  box-shadow: var(--shadow-sm);
+}
+.reminder-bar .group { display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap; }
+.reminder-bar label { font-size: 12px; font-weight: 650; color: #c8cdd8; }
+.reminder-bar select, .reminder-bar input[type="range"] {
+  padding: 4px 9px; border-radius: 9px; border: 1px solid #2e3442;
+  font-size: 12px; background: #1a1d24; color: #e6e8ee; cursor: pointer;
+  box-shadow: var(--shadow-sm); transition: border-color .15s;
+}
+.reminder-bar select:hover, .reminder-bar input[type="range"]:hover { border-color: #4a5264; }
+.reminder-bar input[type="range"] { width: 110px; padding: 0; accent-color: #60a5fa; cursor: pointer; }
+.reminder-bar .volume-value { font-size: 12px; font-weight: 650; color: #8b93a3; min-width: 34px; font-variant-numeric: tabular-nums; }
+.reminder-bar .status-dot {
+  display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+  background: #22c55e; margin-right: 4px;
+  animation: pulse 1.5s infinite;
+  box-shadow: 0 0 0 3px rgba(34,197,94,.22);
+}
+.reminder-bar .status-dot.paused { background: #f59e0b; animation: none; box-shadow: 0 0 0 3px rgba(245,158,11,.22); }
+@keyframes pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .55; transform: scale(.82); } }
+
+/* ===== Paste area ===== */
+.paste-area {
+  background: rgba(21,23,29,.82);
+  border: 1px dashed #3a4152; border-radius: 14px;
+  padding: 11px 16px; margin-bottom: 12px;
+  display: flex; flex-direction: column; gap: 8px;
+  box-shadow: var(--shadow-sm);
+  transition: border-color .2s, background .2s;
+}
+.paste-area:focus-within { border-color: var(--accent); background: rgba(26,29,36,.9); }
+.paste-top-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.paste-area textarea {
+  width: 100%; border: 1px solid #2e3442; border-radius: 11px;
+  padding: 8px 12px; font-size: 12px; resize: vertical;
+  min-height: 50px; max-height: 130px; font-family: inherit;
+  background: #1a1d24; color: #e6e8ee;
+  transition: border-color .15s, box-shadow .15s;
+}
+.paste-area textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59,130,246,.14); }
+.paste-area textarea::placeholder { color: #6b7382; }
+.paste-area .hint { font-size: 11px; color: #8b93a3; white-space: nowrap; margin-left: auto; }
+
+/* ===== Table ===== */
+.table-wrap {
+  overflow-x: auto;
+  border-radius: 14px;
+  border: 1px solid #2a2f3a;
+  background: rgba(21,23,29,.78);
+  box-shadow: var(--shadow-sm);
+}
+table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 580px; }
+th {
+  text-align: left; padding: 11px 14px;
+  background: linear-gradient(180deg, #20242d, #1a1d24);
+  font-weight: 700; color: #e6e8ee;
+  border-bottom: 1px solid #2e3442;
+  font-size: 12px; letter-spacing: .3px;
+  position: sticky; top: 0;
+}
+td { padding: 10px 13px; border-bottom: 1px solid #2a2f3a; vertical-align: middle; transition: background .12s; color: #c8cdd8; }
+tbody tr { transition: transform .12s, box-shadow .12s; }
+tbody tr:hover td { background: rgba(96,165,250,.06); }
+tbody tr:last-child td { border-bottom: none; }
+
+.boss-name { font-weight: 650; color: #e6e8ee; white-space: nowrap; cursor: pointer; }
+.boss-name:hover { color: #60a5fa; }
+
+/* ===== 即将刷新（到点前 5 分钟内）：Boss 名变蓝高亮（主表格与合并查看通用） ===== */
+.boss-soon { color: #6ea8ff; font-weight: 700; }
+.boss-name.boss-soon:hover { color: #6ea8ff; }
+
+/* ===== Boss 到点后 5 分钟内：名字毛玻璃放大提示（替代原闪红） ===== */
+.boss-window {
+  background: rgba(255,255,255,.09);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 10px;
+  padding: 3px 10px;
+  font-size: 15.5px;
+  box-shadow: 0 2px 14px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.08);
+  color: #fff;
+  display: inline-block;
+  transition: all .3s ease;
+  white-space: nowrap;
+  line-height: 1.6;
+}
+
+/* ===== Badges（降饱和：柔和统一，避免高饱和色互相打架） ===== */
+.badge {
+  display: inline-block; padding: 2px 11px; border-radius: 40px;
+  font-size: 11px; font-weight: 600;
+  background: rgba(125,146,171,.10); color: #9aa8bd;
+  white-space: nowrap;
+  border: 1px solid rgba(125,146,171,.18);
+}
+.badge-warning { background: rgba(217,145,60,.10); color: #c9a056; border-color: rgba(217,145,60,.20); }
+.badge-danger { background: rgba(233,96,96,.12); color: #e08f8f; border-color: rgba(233,96,96,.24); }
+.badge-muted { background: rgba(139,147,163,.10); color: #7d8a9e; border-color: rgba(139,147,163,.18); }
+.badge-reminded { background: rgba(96,165,250,.12); color: #8db8ee; border-color: rgba(96,165,250,.24); }
+
+.countdown { font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: .2px; white-space: nowrap; font-size: 13px; color: #e6e8ee; }
+.text-muted { color: #8b93a3; }
+.actions { display: flex; gap: 4px; flex-wrap: nowrap; }
+.empty-state { padding: 36px 16px; text-align: center; color: #8b93a3; font-size: 14px; }
+.footer-note {
+  margin-top: 14px; font-size: 12px; color: #8b93a3; text-align: center;
+  border-top: 1px solid rgba(255,255,255,.07); padding-top: 12px; line-height: 1.8;
+}
+
+.col-name { width: 1%; white-space: nowrap; }
+.col-zone { width: 1%; white-space: nowrap; color: #8b93a3; font-size: 13px; }
+.boss-zone { color: #8b93a3; font-size: 13px; white-space: nowrap; }
+.col-actions { width: 1%; white-space: nowrap; }
+.col-time { width: 3%; white-space: nowrap; }
+.col-countdown { width: 3%; white-space: nowrap; }
+.col-status { width: 20%; white-space: nowrap; }
+
+/* ===== Status chips ===== */
+.cloud-status {
+  font-size: 11px; font-weight: 600; color: #8b93a3;
+  padding: 2px 11px; border-radius: 40px;
+  background: #232833; display: inline-flex; align-items: center; gap: 4px;
+  border: 1px solid #2a2f3a;
+}
+.cloud-status.synced { background: rgba(74,222,128,.12); color: #4ade80; border-color: rgba(74,222,128,.3); }
+.cloud-status.syncing { background: rgba(245,158,11,.12); color: #fbbf24; border-color: rgba(245,158,11,.3); }
+.cloud-status.error { background: var(--red-soft); color: #e08f8f; border-color: rgba(233,96,96,.3); }
+
+.mode-tag {
+  font-size: 11px; font-weight: 650; padding: 2px 11px; border-radius: 40px;
+  background: rgba(74,222,128,.12); color: #4ade80;
+  display: inline-flex; align-items: center; gap: 4px;
+  border: 1px solid rgba(74,222,128,.3);
+}
+.mode-tag.readonly { background: var(--red-soft); color: #e08f8f; border-color: rgba(233,96,96,.3); }
+
+.tz-tag {
+  font-size: 11px; font-weight: 650; padding: 2px 11px; border-radius: 40px;
+  background: var(--violet-soft); color: #c4b5fd;
+  display: inline-flex; align-items: center; gap: 4px;
+  border: 1px solid rgba(167,139,250,.3);
+}
+
+/* ===== Modal ===== */
+.modal-overlay {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(0,0,0,.66);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: none; justify-content: center; align-items: center;
+  z-index: 999;
+}
+.modal {
+  background: linear-gradient(180deg, #1a1d24, #15171d);
+  padding: 22px 26px 26px;
+  border-radius: 22px; max-width: 540px; width: 94%;
+  box-shadow: var(--shadow-lg);
+  border: 1px solid #2a2f3a;
+  max-height: 90vh; overflow-y: auto;
+  animation: modalIn .22s cubic-bezier(.2,.9,.3,1.2);
+}
+@keyframes modalIn {
+  from { opacity: 0; transform: translateY(14px) scale(.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.modal h3 { margin-bottom: 12px; font-size: 18px; font-weight: 750; color: #e6e8ee; }
+.modal label { font-weight: 650; display: block; margin-top: 12px; margin-bottom: 4px; color: #c8cdd8; font-size: 13px; }
+.modal input, .modal select {
+  width: 100%; padding: 8px 13px;
+  border: 1px solid #2e3442; border-radius: 12px;
+  font-size: 13px; background: #1a1d24; color: #e6e8ee;
+  transition: border-color .15s, box-shadow .15s;
+}
+.modal input:focus, .modal select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59,130,246,.14); }
+.modal input[readonly] { background: #20242d; color: #8b93a3; cursor: not-allowed; }
+.modal-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
+.modal .batch-list {
+  max-height: 300px; overflow-y: auto;
+  border: 1px solid #2a2f3a; border-radius: 12px;
+  padding: 8px 14px; margin: 10px 0;
+  font-size: 13px; background: #15171d;
+}
+.modal .batch-item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 6px 0; border-bottom: 1px solid #232833;
+}
+.modal .batch-item:last-child { border-bottom: none; }
+.modal .batch-item .status { font-size: 11px; color: #8b93a3; white-space: nowrap; }
+.modal .batch-item input[type="checkbox"] { width: auto; accent-color: var(--accent); }
+
+/* ===== Toast ===== */
+.toast {
+  position: fixed; bottom: 26px; left: 50%;
+  transform: translateX(-50%) translateY(16px);
+  background: linear-gradient(135deg, #23262e, #1a1d24);
+  color: #e6e8ee; padding: 10px 22px; border-radius: 60px;
+  font-weight: 600;
+  box-shadow: 0 10px 30px -6px rgba(0,0,0,.6);
+  opacity: 0; transition: all .25s cubic-bezier(.2,.9,.3,1.1);
+  pointer-events: none; z-index: 1000; font-size: 13px;
+  white-space: nowrap; max-width: 92vw; overflow: hidden; text-overflow: ellipsis;
+  border: 1px solid #2a2f3a;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ===== 合并查看 ===== */
+.mode-badge {
+  display: inline-block; padding: 3px 11px; border-radius: 40px;
+  font-size: 11px; font-weight: 700; white-space: nowrap;
+  border: 1px solid transparent;
+}
+.mode-badge.new { background: rgba(59,130,246,.16); color: #60a5fa; border-color: rgba(59,130,246,.32); }
+.mode-badge.old { background: rgba(245,158,11,.16); color: #fbbf24; border-color: rgba(245,158,11,.32); }
+.merge-wrap {
+  max-height: 62vh; overflow-y: auto;
+  border: 1px solid #2a2f3a; border-radius: 14px;
+  background: rgba(21,23,29,.6);
+  box-shadow: var(--shadow-sm);
+}
+#mergeTbody td { padding: 7px 10px; }
+#mergeTbody tr:hover td { background: rgba(96,165,250,.06); }
+.merge-legend { font-size: 12px; color: #8b93a3; margin-bottom: 10px; line-height: 1.7; }
+
+/* ===== Scrollbar ===== */
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #333a48; border-radius: 8px; border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: #4a5264; border: 2px solid transparent; background-clip: content-box; }
+
+/* ===== 「⋯ 更多」下拉菜单 ===== */
+.more-wrap { position: relative; }
+.more-menu {
+  position: absolute; right: 0; top: calc(100% + 8px);
+  background: #1a1d24; border: 1px solid #2a2f3a; border-radius: 12px;
+  padding: 8px; min-width: 190px;
+  display: none; flex-direction: column; gap: 6px;
+  box-shadow: 0 16px 40px rgba(0,0,0,.55); z-index: 80;
+  animation: menuIn .16s ease;
+}
+.more-menu.show { display: flex; }
+.more-menu .btn { justify-content: flex-start; width: 100%; }
+.more-item-row { display: flex; flex-direction: column; gap: 6px; padding: 6px 4px 2px; border-top: 1px solid #232833; margin-top: 2px; }
+@keyframes menuIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ===== 行内 ⋯ 菜单 ===== */
+.row-more { position: relative; display: inline-flex; }
+.row-menu {
+  position: absolute; right: 0; top: calc(100% + 6px);
+  background: #1a1d24; border: 1px solid #2a2f3a; border-radius: 10px;
+  padding: 5px; min-width: 108px;
+  display: none; flex-direction: column; gap: 2px;
+  box-shadow: 0 12px 30px rgba(0,0,0,.55); z-index: 70;
+  animation: menuIn .14s ease;
+}
+.row-menu.show { display: flex; }
+.row-menu-item {
+  background: transparent; border: none; color: #e6e8ee;
+  padding: 6px 10px; border-radius: 7px; cursor: pointer;
+  font-size: 12px; text-align: left; display: flex; align-items: center; gap: 6px;
+  font-family: inherit; white-space: nowrap;
+}
+.row-menu-item:hover { background: #232833; }
+.row-menu-item.danger { color: #e08f8f; }
+.row-menu-item.disabled { color: #5a6170; cursor: default; }
+
+/* ===== 粘贴解析悬浮球（圆形图标 + 弹出面板） ===== */
+.paste-float { position: fixed; right: 22px; bottom: 22px; z-index: 90; }
+
+/* ===== 同步云端悬浮球（可拖动） ===== */
+.sync-fab-wrap { position: fixed; right: 26px; bottom: 96px; z-index: 89; }
+.sync-fab {
+  width: 52px; height: 52px; border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.18);
+  background: linear-gradient(145deg, #16a34a, #14532d);
+  color: #fff; font-size: 22px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 10px 30px rgba(0,0,0,.5);
+  transition: transform .18s ease, box-shadow .18s ease;
+  user-select: none;
+}
+.sync-fab:hover { transform: scale(1.08); box-shadow: 0 14px 36px rgba(0,0,0,.55), 0 0 0 6px rgba(74,222,128,.15); }
+.sync-fab:active { transform: scale(.94); }
+.paste-fab {
+  width: 56px; height: 56px; border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.18);
+  background: linear-gradient(145deg, #2563eb, #1e3a8a);
+  color: #fff; font-size: 24px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 10px 30px rgba(0,0,0,.5);
+  transition: transform .18s ease, box-shadow .18s ease;
+  user-select: none;
+}
+.app.mode-old .paste-fab { background: linear-gradient(145deg, #d97706, #92400e); }
+.paste-fab:hover { transform: scale(1.08); box-shadow: 0 14px 36px rgba(0,0,0,.55), 0 0 0 6px rgba(96,165,250,.15); }
+.paste-fab:active { transform: scale(.94); }
+.paste-pop {
+  position: absolute; right: 0; bottom: calc(100% + 14px);
+  width: 330px;
+  background: rgba(26,29,36,.97);
+  border: 1px solid #2a2f3a; border-radius: 16px;
+  box-shadow: 0 18px 50px rgba(0,0,0,.55);
+  padding: 12px;
+  display: none;
+}
+.paste-float.open .paste-pop { display: block; animation: popIn .18s ease; }
+@keyframes popIn { from { opacity: 0; transform: translateY(8px) scale(.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+.paste-pop-head { font-size: 12px; font-weight: 650; color: #c8cdd8; padding: 2px 2px 8px; }
+.paste-pop textarea {
+  width: 100%; border: 1px solid #2e3442; border-radius: 10px;
+  padding: 8px 10px; font-size: 12px; resize: vertical;
+  min-height: 72px; max-height: 160px; font-family: inherit;
+  background: #1a1d24; color: #e6e8ee;
+  transition: border-color .15s, box-shadow .15s;
+}
+.paste-pop textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59,130,246,.14); }
+.paste-pop textarea::placeholder { color: #6b7382; }
+.paste-pop-actions { display: flex; align-items: center; gap: 8px; padding-top: 8px; }
+.paste-pop .hint { font-size: 11px; color: #8b93a3; white-space: nowrap; }
+
+/* ===== Boss 到点玻璃框提醒（透明玻璃 + 向上凸起 + 字体放大） ===== */
+.due-glass {
+  position: fixed; left: 50%; bottom: 28px;
+  transform: translateX(-50%) translateY(34px);
+  display: flex; align-items: center; gap: 14px;
+  padding: 16px 36px;
+  background: rgba(255,255,255,.08);
+  backdrop-filter: blur(22px);
+  -webkit-backdrop-filter: blur(22px);
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 24px;
+  box-shadow: 0 24px 60px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.14);
+  opacity: 0; pointer-events: none;
+  transition: opacity .35s ease, transform .45s cubic-bezier(.2,.9,.3,1.15);
+  z-index: 300;
+}
+.due-glass.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.due-zone {
+  font-size: 13px; font-weight: 700;
+  padding: 4px 14px; border-radius: 40px;
+  letter-spacing: .5px; white-space: nowrap;
+}
+.due-zone.new { background: rgba(59,130,246,.28); color: #93c5fd; border: 1px solid rgba(96,165,250,.4); }
+.due-zone.old { background: rgba(245,158,11,.28); color: #fcd34d; border: 1px solid rgba(251,191,36,.4); }
+.due-name {
+  font-size: 30px; font-weight: 800; color: #fff;
+  letter-spacing: 1.5px; white-space: nowrap;
+  text-shadow: 0 2px 22px rgba(255,255,255,.3);
+}
+@media (max-width: 640px) {
+  .due-glass { padding: 12px 22px; }
+  .due-name { font-size: 22px; }
+}
+
+/* ===== Responsive ===== */
+@media (max-width: 640px) {
+  body { padding: 8px 6px 16px; }
+  .app { padding: 12px 10px 16px; border-radius: 16px; }
+  .header h1 { font-size: 17px; }
+  .clock-badge { font-size: 12px; padding: 3px 10px; }
+  .btn { font-size: 11px; padding: 4px 10px; }
+  table { font-size: 12px; min-width: 480px; }
+  th, td { padding: 5px 7px; }
+  .countdown { font-size: 12px; }
+  .btn-sm { font-size: 10px; padding: 2px 6px; }
+  .paste-area { flex-direction: column; align-items: stretch; }
+  .paste-top-row { flex-wrap: wrap; }
+  .paste-area .hint { margin-left: 0; }
+  .reminder-bar { flex-direction: column; align-items: stretch; }
+  .reminder-bar .group { justify-content: space-between; }
+  .toolbar .right-group { margin-left: 0; width: 100%; justify-content: flex-end; }
+  .btn-tz { font-size: 10px; padding: 3px 8px; }
+  .modal { padding: 18px 18px 22px; border-radius: 18px; }
+}
+/* 配置管理面板 */
+.cat-tabs{display:flex;gap:7px;margin:9px 0 12px}.cat-tabs .active{background:#2563eb;border-color:#3b82f6;color:white}
+.cat-table-wrap{overflow:auto;max-height:48vh;border:1px solid #303747;border-radius:10px}.cat-table{min-width:590px;font-size:12px}.cat-table td,.cat-table th{padding:7px 9px}
+.cat-table .btn{padding:4px 9px;font-size:11px}.cat-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px 12px}
+.cat-zone-add{display:flex;gap:9px;margin:12px 0}.cat-zone-add input{flex:1;min-width:0}.cat-zone-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 6px;border-bottom:1px solid #293243}.cat-zone-row .btn{font-size:11px;padding:4px 9px}
+@media(max-width:580px){.cat-form-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<div class="app mode-new" id="app">
+    <div class="header">
+        <h1>⚔️ Boss 刷新 <small id="modeLabel" style="font-weight:700; color:#60a5fa;">🆕 新区</small></h1>
+        <div class="top-actions">
+            <span class="clock-badge" id="clockBadge">🕐 <span id="currentTimeDisplay">--:--:--</span> <span id="tzTagInline">· 🇯🇵 日本</span></span>
+            <button class="btn-tz active" id="tzJapan" onclick="setTimezone('japan')">🇯🇵 日本</button>
+            <button class="btn-tz" id="tzChina" onclick="setTimezone('china')">🇨🇳 中国</button>
+            <button class="btn-tab-new active" data-mode="new" onclick="switchMode('new')" id="tabNew">🆕 新区</button>
+            <button class="btn-tab-old" data-mode="old" onclick="switchMode('old')" id="tabOld">🕰️ 老区</button>
+        </div>
+    </div>
+
+    <div class="reminder-bar">
+        <div class="group">
+            <label>🔔 提前</label>
+            <select id="remindMinutes">
+                <option value="1000" selected>1 秒（到点提醒）</option>
+                <option value="60000">1 分钟</option>
+                <option value="120000">2 分钟</option>
+                <option value="180000">3 分钟</option>
+                <option value="240000">4 分钟</option>
+                <option value="300000">5 分钟</option>
+            </select>
+            <label>提醒</label>
+        </div>
+        <div class="group">
+            <label>🔊 音量</label>
+            <input type="range" id="volumeSlider" min="0" max="100" value="70" />
+            <span class="volume-value" id="volumeDisplay">70%</span>
+        </div>
+        <div class="group">
+            <span class="status-dot" id="statusDot"></span>
+            <span style="font-size:12px; color:#8b93a3;" id="statusText">运行中</span>
+            <button class="btn btn-outline" id="toggleReminderBtn" onclick="toggleReminder()">⏸ 暂停</button>
+            <button class="btn btn-sm remind" onclick="testAlert()" style="border-color:#3b82f6; color:#60a5fa; font-size:11px;">🔔 测试</button>
+        </div>
+    </div>
+
+<div class="toolbar">
+    <span class="badge-count">📋 <span id="bossCount">0</span></span>
+    <button class="btn btn-primary" onclick="openAddModal()">＋ 新增</button>
+    <button class="btn btn-outline" onclick="undoLast()" id="undoBtn" title="撤销上一步操作（批量解析/编辑/击杀/删除等）">↩️ 撤销</button>
+    <button class="btn btn-warning" onclick="delayAllPastUnupdated()" title="已过未更新的 Boss 顺延一个刷新周期">⟳ 顺延已过</button>
+    <button class="btn btn-info" onclick="openMergeView()">📊 合并查看</button>
+    <span class="cloud-status" id="cloudStatus">☁️ 未同步</span>
+    <label style="font-size:11px; display:flex; align-items:center; gap:4px; cursor:pointer; color:#c8cdd8;">
+        <input type="checkbox" id="uploadModeCheck" onchange="toggleUploadMode()" style="accent-color:#60a5fa;" />
+        ✏️ 上传模式
+    </label>
+    <span class="mode-tag readonly" id="modeTag">🔒 不可上传</span>
+    <div class="more-wrap" id="moreWrap">
+        <button class="btn btn-outline" onclick="toggleMoreMenu()" id="moreBtn">⋯ 更多</button>
+        <div class="more-menu" id="moreMenu">
+            <button class="btn btn-danger" onclick="clearAllReminded()">✕ 清除提醒标记</button>
+            <button class="btn btn-outline" onclick="openCatalog()">⚙️ Boss / 地区管理</button>
+            <button class="btn btn-outline" onclick="openCloudSettings()">🔐 管理员授权</button>
+            <button class="btn btn-info" onclick="loadFromCloud()">📥 从云端下载</button>
+            <button class="btn btn-danger" onclick="resetDefaultData()">↺ 恢复默认</button>
+        </div>
+    </div>
+    <input type="file" id="importFile" accept=".json" style="display:none" onchange="importData(event)" />
+</div>
+
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th class="col-zone">地区</th>
+                    <th class="col-name">Boss</th>
+                    <th class="col-actions">操作</th>
+                    <th class="col-time">下次刷新</th>
+                    <th class="col-countdown">⏳ 倒计时</th>
+                    <th class="col-status">状态 / 几率</th>
+                </tr>
+            </thead>
+            <tbody id="bossTableBody"></tbody>
+        </table>
+    </div>
+
+    <div class="footer-note">
+        ☁️ 在线共享 · ✅ 本地保存 · ⚔️记录击杀 · ⟳顺延 · 🔔 提醒 · 🇯🇵🇨🇳 时区切换 · 📋 微信文字智能解析 · ☁️ 云端同步
+    </div>
+</div>
+
+<!-- 同步云端悬浮球（可拖动 / 点击即同步 / 上传模式开启时显示） -->
+<div class="sync-fab-wrap" id="syncFabWrap" style="display:none;">
+    <button class="sync-fab" id="syncFab" onclick="syncFabClick(event)" title="同步到云端">☁️</button>
+</div>
+
+<!-- 粘贴解析悬浮球（圆形图标 / 点击展开 / 点击页面其他位置收起） -->
+<div class="paste-float" id="pasteFloat">
+    <button class="paste-fab" id="pasteFab" onclick="togglePasteFloat(event)" title="粘贴解析">📋</button>
+    <div class="paste-pop" id="pastePop">
+        <div class="paste-pop-head">📋 微信文字智能解析</div>
+        <textarea id="pasteInput" placeholder="直接粘贴游戏截图 OCR 出的文本（名称和时间可分行），例如：&#10;被污染的克鲁玛&#10;巴实那&#10;2026年09月06日10时47分 2026年09月06日18时47分&#10;2026年09月06日10时30分 2026年09月06日14时30分"></textarea>
+        <div class="paste-pop-actions">
+            <button class="btn btn-success" onclick="parseAndUpdate()">▶ 解析并更新</button>
+            <span class="hint">正常记录自动勾选 · 异常提示核对</span>
+        </div>
+    </div>
+</div>
+
+<!-- 编辑弹窗 -->
+<div class="modal-overlay" id="modalOverlay">
+    <div class="modal">
+        <h3 id="modalTitle">编辑 Boss</h3>
+        <label>Boss 名称</label>
+        <input id="inputName" placeholder="例如：凯索思" list="bossNameList" />
+        <datalist id="bossNameList"></datalist>
+        <label>地区</label>
+        <select id="inputZone" style="width:100%; padding:9px 10px; border-radius:10px; background:#232833; color:#e6e8ee; border:1px solid #2a2f3a; font-size:14px;">
+            <option value="古鲁丁">古鲁丁</option>
+            <option value="狄恩">狄恩</option>
+            <option value="奇岩">奇岩</option>
+            <option value="欧瑞">欧瑞</option>
+        </select>
+        <label>击退时间（输入后自动计算下次刷新）</label>
+        <input id="inputKillTime" type="datetime-local" />
+        <label style="margin-top:6px; font-size:12px; color:#8b93a3;">⏳ 下次刷新时间（自动计算）</label>
+        <input id="inputTime" type="datetime-local" />
+        <label>刷新间隔（小时）</label>
+        <input id="inputInterval" type="number" placeholder="例如 8" step="1" />
+        <label>刷新几率（固定，不可修改）</label>
+        <input id="inputProb" type="number" style="display:none;" />
+        <div style="font-size:12px; color:#8b93a3; margin-top:-4px;">🔒 几率已写死，跟随 Boss 默认配置</div>
+        <div class="modal-footer">
+            <button class="btn btn-outline" onclick="closeModal()">取消</button>
+            <button class="btn btn-primary" id="modalSaveBtn" onclick="saveBoss()">保存</button>
+        </div>
+    </div>
+</div>
+
+<!-- Boss及地区配置管理，不改变旧版数据结构 -->
+<div class="modal-overlay" id="catalogOverlay"><div class="modal" style="max-width:850px;width:96%;">
+  <h3>⚙️ Boss / 地区管理</h3>
+  <div class="cat-tabs"><button id="catBossTab" class="btn active" onclick="catalogTab='boss';renderCatalog()">Boss 配置</button><button id="catZoneTab" class="btn" onclick="catalogTab='zone';renderCatalog()">地区管理</button></div>
+  <div id="catBossPane"><div style="margin:10px 0"><button class="btn btn-primary" onclick="editCatalogBoss(-1)">＋ 新增 Boss</button></div>
+    <div id="catBossForm" style="display:none;border:1px solid #344052;border-radius:12px;padding:12px;margin-bottom:12px">
+      <input type="hidden" id="catEditIdx" value="-1"/>
+      <div class="cat-form-grid"><div><label>Boss 名称</label><input id="catBossName" placeholder="Boss 名称"/></div><div><label>刷新间隔（小时）</label><input id="catBossHours" type="number" min="0.1" step="0.1"/></div><div><label>刷新概率（%）</label><input id="catBossProb" type="number" min="0" max="100" step="1"/></div><div><label>地区</label><select id="catBossZone"></select></div></div>
+      <div class="modal-footer"><button class="btn btn-outline" onclick="document.getElementById('catBossForm').style.display='none'">取消</button><button class="btn btn-primary" onclick="saveCatalogBoss()">保存配置</button></div>
+    </div>
+    <div class="cat-table-wrap"><table class="cat-table"><thead><tr><th>Boss</th><th>地区</th><th>间隔</th><th>几率</th><th>操作</th></tr></thead><tbody id="catBossRows"></tbody></table></div>
+  </div>
+  <div id="catZonePane" style="display:none"><div class="cat-zone-add"><input id="catNewZone" placeholder="输入新地区名称"/><button class="btn btn-primary" onclick="addCatalogZone()">＋ 新增地区</button></div><div id="catZoneRows"></div><p style="font-size:12px;color:#8b93a3;margin-top:10px">有 Boss 或计时记录使用的地区不能直接删除；地区改名会同步修改已有记录。</p></div>
+  <div class="modal-footer"><button class="btn btn-outline" onclick="closeCatalog()">关闭</button></div>
+</div></div>
+
+<!-- 批量确认弹窗 -->
+<div class="modal-overlay" id="batchModalOverlay">
+    <div class="modal">
+        <h3 id="batchModalTitle">📋 识别到 <span id="batchCount">0</span> 条Boss记录</h3>
+        <div class="batch-list" id="batchList"></div>
+        <div style="margin-top:6px; font-size:12px; color:#5a6170;">✅ 勾选表示更新/新增 · 未勾选跳过</div>
+        <div class="modal-footer">
+            <button class="btn btn-outline" onclick="closeBatchModal()">取消</button>
+            <button class="btn btn-primary" onclick="confirmBatchUpdate()">确认更新</button>
+        </div>
+    </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- Boss 到点玻璃框提醒 -->
+<div class="due-glass" id="dueGlass">
+    <span class="due-zone" id="dueGlassZone">🆕 新区</span>
+    <span class="due-name" id="dueGlassName"></span>
+</div>
+
+<!-- 新区 + 老区 合并查看弹窗 -->
+<div class="modal-overlay" id="mergeModalOverlay">
+    <div class="modal" style="max-width:900px;">
+        <h3 style="display:flex;align-items:center;gap:10px;">
+            📊 新区 + 老区 合并刷新表
+            <button class="btn btn-outline" style="margin-left:auto;" onclick="closeMergeModal()">✕ 关闭</button>
+        </h3>
+        <div class="merge-legend">
+            <span class="mode-badge new">🆕 新区</span> 蓝色 &nbsp;·&nbsp; <span class="mode-badge old">🕰️ 老区</span> 橙色 &nbsp;·&nbsp; 按下次刷新时间从近到远排列，倒计时实时更新
+        </div>
+        <div class="merge-wrap">
+            <table style="width:100%;border-collapse:collapse;font-size:13px;min-width:620px;">
+                <thead>
+                    <tr>
+                        <th>地区</th>
+                        <th>Boss</th>
+                        <th>区服</th>
+                        <th>下次刷新</th>
+                        <th>⏳ 倒计时</th>
+                        <th>状态 / 几率</th>
+                    </tr>
+                </thead>
+                <tbody id="mergeTbody"></tbody>
+            </table>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-outline" onclick="closeMergeModal()">关闭</button>
+        </div>
+    </div>
+</div>
+
+<!-- 云端管理员授权：密码不进入 HTML / localStorage -->
+<div class="modal-overlay" id="cloudSettingsOverlay"><div class="modal" style="max-width:490px">
+<h3>🔐 管理员授权</h3>
+<p style="color:#aab4c6;font-size:12px;line-height:1.7">JSONBin 密钥保存在 Cloudflare 服务端。请输入你在 Pages 设置的管理员密码，仅保留在当前页面内存里。朋友使用独立只读页面，无需密码。</p>
+<label>管理员密码</label><input id="adminPasswordInput" type="password" autocomplete="off" placeholder="Cloudflare ADMIN_PASSWORD"/>
+<div id="cloudConnectionLabel" style="color:#93c5fd;font-size:12px;margin-top:8px">云端托管模式</div>
+<div class="modal-footer"><button class="btn btn-outline" onclick="closeCloudSettings()">取消</button><button class="btn btn-danger" onclick="clearCloudSettings()">退出管理授权</button><button class="btn btn-primary" onclick="saveCloudSettings()">保存本次授权</button></div>
+</div></div>
+
+<script>
+    // 云端凭证不写入 HTML 源码。仅在当前设备的浏览器存储中读取用户自己填写的配置。
+    // 注意：前端 localStorage 不是安全的密钥保险库；请使用受限密钥、不要共享已配置的浏览器环境。
+    // 通过同源 Cloudflare Pages Functions 访问 JSONBin。密钥仅保存在服务端。
+    let adminPassword = '';
+    function cloudReady() { return true; }
+    function getBinId() { return mode; }
+    function updateCloudConnectionLabel() {
+        const el = document.getElementById('cloudConnectionLabel');
+        if (el) el.textContent = adminPassword ? '✅ 本次页面已输入管理员密码' : '🔒 尚未输入管理员密码；仅可下载';
+    }
+    function openCloudSettings() { document.getElementById('cloudSettingsOverlay').style.display='flex'; updateCloudConnectionLabel(); }
+    function closeCloudSettings() { document.getElementById('cloudSettingsOverlay').style.display='none'; }
+    function saveCloudSettings() {
+        adminPassword = document.getElementById('adminPasswordInput').value;
+        if(!adminPassword) return showToast('请填写管理员密码');
+        uploadModeCheck.checked = false; toggleUploadMode();
+        updateCloudConnectionLabel(); closeCloudSettings();
+        showToast('🔐 已保存本次页面的授权；首次上传时由服务端验证');
+    }
+    function clearCloudSettings() {
+        adminPassword = '';
+        document.getElementById('adminPasswordInput').value = '';
+        uploadModeCheck.checked=false; toggleUploadMode();
+        updateCloudConnectionLabel(); closeCloudSettings();
+    }
+
+    const FACTORY_BOSSES = [
+        { "id": "b10", "name": "安库拉", "time": "", "interval": 6, "prob": 50, "zone": "狄恩" },
+        { "id": "b2", "name": "魔图拉", "time": "", "interval": 6, "prob": 50, "zone": "奇岩" },
+        { "id": "b3", "name": "布赖卡", "time": "", "interval": 6, "prob": 50, "zone": "奇岩" },
+        { "id": "b14", "name": "梅杜莎", "time": "", "interval": 10, "prob": 100, "zone": "奇岩" },
+        { "id": "b15", "name": "沙勒卡", "time": "", "interval": 10, "prob": 100, "zone": "狄恩" },
+        { "id": "b16", "name": "塔拉金", "time": "", "interval": 10, "prob": 100, "zone": "狄恩" },
+        { "id": "b17", "name": "卡坦", "time": "", "interval": 10, "prob": 100, "zone": "狄恩" },
+        { "id": "b11", "name": "贝希莫斯", "time": "", "interval": 9, "prob": 100, "zone": "奇岩" },
+        { "id": "b1", "name": "潘纳洛德", "time": "", "interval": 5, "prob": 50, "zone": "奇岩" },
+        { "id": "b5", "name": "史坦", "time": "", "interval": 7, "prob": 100, "zone": "狄恩" },
+        { "id": "b26", "name": "赛鲁", "time": "", "interval": 12, "prob": 33, "zone": "欧瑞" },
+        { "id": "b28", "name": "坦佛斯特", "time": "", "interval": 6, "prob": 50, "zone": "狄恩" },
+        { "id": "b4", "name": "佩尔利斯", "time": "", "interval": 3, "prob": 50, "zone": "狄恩" },
+        { "id": "b6", "name": "采尔图巴", "time": "", "interval": 6, "prob": 50, "zone": "古鲁丁" },
+        { "id": "b24", "name": "巴实那", "time": "", "interval": 4, "prob": 50, "zone": "古鲁丁" },
+        { "id": "b18", "name": "突变克鲁玛", "time": "", "interval": 8, "prob": 100, "zone": "狄恩" },
+        { "id": "b12", "name": "特论巴", "time": "", "interval": 7, "prob": 50, "zone": "古鲁丁" },
+        { "id": "b22", "name": "猛龙兽", "time": "", "interval": 12, "prob": 33, "zone": "奇岩" },
+        { "id": "b13", "name": "巨蚁女王", "time": "", "interval": 6, "prob": 50, "zone": "古鲁丁" },
+        { "id": "b25", "name": "卡雷斯", "time": "", "interval": 9, "prob": 50, "zone": "狄恩" },
+        { "id": "b27", "name": "凯索思", "time": "", "interval": 10, "prob": 50, "zone": "古鲁丁" },
+        { "id": "b21", "name": "瓦柏", "time": "", "interval": 12, "prob": 50, "zone": "欧瑞" },
+        { "id": "b8", "name": "塔金", "time": "", "interval": 8, "prob": 33, "zone": "欧瑞" },
+        { "id": "b19", "name": "潘柴特", "time": "", "interval": 12, "prob": 100, "zone": "狄恩" },
+        { "id": "b20", "name": "萨班", "time": "", "interval": 12, "prob": 100, "zone": "古鲁丁" },
+        { "id": "b7", "name": "提米特利斯", "time": "", "interval": 8, "prob": 100, "zone": "狄恩" },
+        { "id": "b9", "name": "被污染的克鲁玛", "time": "", "interval": 8, "prob": 100, "zone": "狄恩" },
+        { "id": "b23", "name": "黑色蕾尔莉", "time": "", "interval": 12, "prob": 100, "zone": "奇岩" },
+        { "id": "b29", "name": "核心基座", "time": "", "interval": 10, "prob": 33, "zone": "狄恩" },
+        { "id": "b30", "name": "提米妮尔", "time": "", "interval": 8, "prob": 100, "zone": "欧瑞" },
+        { "id": "b31", "name": "雷比鲁", "time": "", "interval": 7, "prob": 50, "zone": "欧瑞" },
+        { "id": "b33", "name": "寇伦", "time": "", "interval": 12, "prob": 100, "zone": "欧瑞" },
+        { "id": "b32", "name": "奥尔芬", "time": "", "interval": 24, "prob": 33, "zone": "欧瑞" }
+    ];
+
+    // Boss 配置与地区配置共享于新区/老区，沿用旧版 Boss ID、云端记录格式。
+    const CATALOG_KEY = 'bossTimer_catalog_v2';
+    const FACTORY_ZONES = ['古鲁丁','狄恩','奇岩','欧瑞'];
+    let DEFAULT_BOSSES = FACTORY_BOSSES.map(x => ({...x}));
+    let ZONE_OPTIONS = [...FACTORY_ZONES];
+    function persistCatalog() {
+        localStorage.setItem(CATALOG_KEY, JSON.stringify({version:2,zones:ZONE_OPTIONS,bosses:DEFAULT_BOSSES}));
+    }
+    function applyCatalog(raw) {
+        if (!raw || !Array.isArray(raw.zones) || !Array.isArray(raw.bosses)) return false;
+        const z = [...new Set(raw.zones.filter(x=>typeof x==='string').map(x=>x.trim()).filter(Boolean))];
+        const b = raw.bosses.filter(x=>x && typeof x.name==='string' && x.name.trim() && Number(x.interval)>0 && Number(x.prob)>=0 && Number(x.prob)<=100).map(x=>({
+            id:String(x.id||('b'+Math.random().toString(36).slice(2))), name:x.name.trim(), time:'', interval:Number(x.interval),prob:Number(x.prob),zone:String(x.zone||'')
+        }));
+        if (!z.length || !b.length || new Set(b.map(x=>x.name)).size!==b.length) return false;
+        DEFAULT_BOSSES=b; ZONE_OPTIONS=[...new Set([...z,...b.map(x=>x.zone).filter(Boolean)])];
+        persistCatalog(); refreshZoneSelect(); return true;
+    }
+    function loadCatalog() {
+        try { const raw=JSON.parse(localStorage.getItem(CATALOG_KEY)||'null'); if(raw) applyCatalog(raw); }catch(e){console.warn('Boss配置读取失败',e);}
+        refreshZoneSelect();
+    }
+    function htmlEscape(x) {return String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+    function refreshZoneSelect() {
+        const sel=document.getElementById('inputZone'); if(!sel) return;
+        const v=sel.value;sel.innerHTML=ZONE_OPTIONS.map(z=>`<option value="${htmlEscape(z)}">${htmlEscape(z)}</option>`).join('');
+        if(ZONE_OPTIONS.includes(v))sel.value=v;
+    }
+    function updateBothSavedRecords(transform) {
+        for (const m of ['new','old']) {
+            const k='bossData_integrated_'+m;
+            try {const data=JSON.parse(localStorage.getItem(k)||'null');if(!data||!Array.isArray(data.bosses))continue;
+                 transform(data.bosses);localStorage.setItem(k,JSON.stringify(data));
+                 if(mode===m) bosses=data.bosses;
+            }catch(e){console.warn('记录更新失败',m,e);}
+        }
+        renderTable();
+    }
+    let catalogTab='boss';
+    function openCatalog(which='boss') {catalogTab=which;document.getElementById('moreMenu').classList.remove('show');renderCatalog();document.getElementById('catalogOverlay').style.display='flex';}
+    function closeCatalog(){document.getElementById('catalogOverlay').style.display='none';}
+    function renderCatalog() {
+        document.getElementById('catBossTab').classList.toggle('active',catalogTab==='boss');
+        document.getElementById('catZoneTab').classList.toggle('active',catalogTab==='zone');
+        document.getElementById('catBossPane').style.display=catalogTab==='boss'?'block':'none';
+        document.getElementById('catZonePane').style.display=catalogTab==='zone'?'block':'none';
+        const rows=DEFAULT_BOSSES.map((b,i)=>`<tr><td>${htmlEscape(b.name)}</td><td>${htmlEscape(b.zone)}</td><td>${b.interval}h</td><td>${b.prob}%</td><td><button class="btn btn-outline" onclick="editCatalogBoss(${i})">编辑</button> <button class="btn btn-danger" onclick="deleteCatalogBoss(${i})">删除</button></td></tr>`).join('');
+        document.getElementById('catBossRows').innerHTML=rows;
+        document.getElementById('catZoneRows').innerHTML=ZONE_OPTIONS.map((z,i)=>`<div class="cat-zone-row"><span>${htmlEscape(z)}</span><span><button class="btn btn-outline" onclick="renameCatalogZone(${i})">改名</button> <button class="btn btn-danger" onclick="deleteCatalogZone(${i})">删除</button></span></div>`).join('');
+        const sel=document.getElementById('catBossZone');sel.innerHTML=ZONE_OPTIONS.map(z=>`<option value="${htmlEscape(z)}">${htmlEscape(z)}</option>`).join('');
+    }
+    function editCatalogBoss(i=-1) {
+        const b=i<0?null:DEFAULT_BOSSES[i];document.getElementById('catEditIdx').value=String(i);
+        document.getElementById('catBossName').value=b?.name||'';
+        document.getElementById('catBossHours').value=b?.interval??'';
+        document.getElementById('catBossProb').value=b?.prob??100;
+        document.getElementById('catBossZone').value=b?.zone||ZONE_OPTIONS[0];
+        document.getElementById('catBossForm').style.display='block';
+        document.getElementById('catBossName').focus();
+    }
+    function saveCatalogBoss() {
+        const idx=Number(document.getElementById('catEditIdx').value), old=idx>=0?DEFAULT_BOSSES[idx]:null;
+        const name=document.getElementById('catBossName').value.trim();
+        const interval=Number(document.getElementById('catBossHours').value);
+        const prob=Number(document.getElementById('catBossProb').value);
+        const zone=document.getElementById('catBossZone').value;
+        if(!name || !(interval>0) || !Number.isFinite(interval) || !(prob>=0&&prob<=100) || !zone)return showToast('请填写有效名称、刷新间隔、几率与地区');
+        if(DEFAULT_BOSSES.some((b,i)=>i!==idx && b.name===name))return showToast('Boss名称已存在');
+        if(old && old.name!==name && !confirm(`将「${old.name}」改名为「${name}」？新区和老区的对应记录都会更名。`))return;
+        const next={id:old?.id||('custom_'+Date.now().toString(36)),name,time:'',interval,prob,zone};
+        if(old)DEFAULT_BOSSES[idx]=next;else DEFAULT_BOSSES.push(next);
+        persistCatalog();
+        updateBothSavedRecords(list=>{for(const b of list){if((old&&b.name===old.name)||(!old&&b.name===name)){b.name=name;b.interval=interval;b.prob=prob;b.zone=zone;}}});
+        document.getElementById('catBossForm').style.display='none';renderCatalog();showToast('✅ Boss 配置已保存');
+    }
+    function deleteCatalogBoss(i) {
+        const b=DEFAULT_BOSSES[i];if(!b)return;
+        if(!confirm(`删除「${b.name}」的基础配置？新区、老区的该 Boss 计时记录也会被移除。建议先备份数据。`))return;
+        if(DEFAULT_BOSSES.length<=1)return showToast('至少保留一个 Boss');
+        DEFAULT_BOSSES.splice(i,1);persistCatalog();
+        updateBothSavedRecords(list=>{for(let j=list.length-1;j>=0;j--)if(list[j].name===b.name)list.splice(j,1);});
+        renderCatalog();showToast('已删除 Boss 配置');
+    }
+    function addCatalogZone() {
+        const z=document.getElementById('catNewZone').value.trim();
+        if(!z)return showToast('请输入地区名称');if(ZONE_OPTIONS.includes(z))return showToast('地区已存在');
+        ZONE_OPTIONS.push(z);persistCatalog();refreshZoneSelect();renderCatalog();document.getElementById('catNewZone').value='';showToast('✅ 已新增地区');
+    }
+    function renameCatalogZone(i) {
+        const prev=ZONE_OPTIONS[i];const next=prompt('地区新名称',prev)?.trim();
+        if(!next||next===prev)return;if(ZONE_OPTIONS.includes(next))return showToast('地区已存在');
+        ZONE_OPTIONS[i]=next;DEFAULT_BOSSES.forEach(b=>{if(b.zone===prev)b.zone=next;});persistCatalog();
+        updateBothSavedRecords(list=>list.forEach(b=>{if(b.zone===prev)b.zone=next;}));refreshZoneSelect();renderCatalog();showToast('✅ 地区及 Boss 归属已更新');
+    }
+    function deleteCatalogZone(i) {
+        const z=ZONE_OPTIONS[i];if(ZONE_OPTIONS.length<=1)return showToast('至少保留一个地区');
+        const count=DEFAULT_BOSSES.filter(b=>b.zone===z).length;
+        if(count)return showToast(`该地区还有 ${count} 个 Boss，请先将它们改到其他地区`);
+        // 旧数据可能包含已删除配置的 Boss，拒绝删除仍被引用的地区。
+        for(const m of ['new','old']){try{const d=JSON.parse(localStorage.getItem('bossData_integrated_'+m)||'null');if(d?.bosses?.some(b=>b.zone===z))return showToast('当前仍有计时记录使用该地区，请先调整');}catch(e){}}
+        if(!confirm(`删除地区「${z}」？`))return;
+        ZONE_OPTIONS.splice(i,1);persistCatalog();refreshZoneSelect();renderCatalog();showToast('已删除地区');
+    }
+
+    // 🔒 刷新几率固定从默认配置读取：无论本地/云端/批量/编辑怎么改，显示一律用 DEFAULT_BOSSES 的值
+    function getDefaultProb(name) {
+        const d = DEFAULT_BOSSES.find(b => b.name === name);
+        return d ? d.prob : 50;
+    }
+
+    // 📍 地区：默认跟随 Boss 名称（找不到默认配置时用 boss.zone 或空）
+    function getZone(name, fallback) {
+        const d = DEFAULT_BOSSES.find(b => b.name === name);
+        if (d && d.zone) return d.zone;
+        return fallback || '';
+    }
+
+    let mode = 'new';
+    let timezone = 'japan';
+    let bosses = [];
+    let editingId = null;
+    let batchPending = [];
+    let batchUpdatedNames = [];
+    let reminderEnabled = true;
+    let remindedBosses = new Set();
+    let stoppedFlashing = new Set();
+    let remindedOther = new Set();   // 另一区的提醒状态（key: 区服|bossId）
+    let speakQueue = [];
+    let isSpeaking = false;
+    let audioCtx = null;
+    let toastTimer = null;
+    let uploadEnabled = false;
+
+    const appEl = document.getElementById('app');
+    const tbody = document.getElementById('bossTableBody');
+    const timeDisplay = document.getElementById('currentTimeDisplay');
+    const bossCountSpan = document.getElementById('bossCount');
+    const modeLabel = document.getElementById('modeLabel');
+    const cloudStatus = document.getElementById('cloudStatus');
+    const modeTag = document.getElementById('modeTag');
+    const uploadModeCheck = document.getElementById('uploadModeCheck');
+    const syncFabWrap = document.getElementById('syncFabWrap');
+    const tabNew = document.getElementById('tabNew');
+    const tabOld = document.getElementById('tabOld');
+    const clockBadge = document.getElementById('clockBadge');
+    const tzTagInline = document.getElementById('tzTagInline');
+
+    const modalOverlay = document.getElementById('modalOverlay');
+    const modalTitle = document.getElementById('modalTitle');
+    const inputName = document.getElementById('inputName');
+    const inputZone = document.getElementById('inputZone');
+    const inputKillTime = document.getElementById('inputKillTime');
+    const inputTime = document.getElementById('inputTime');
+    const inputInterval = document.getElementById('inputInterval');
+    const inputProb = document.getElementById('inputProb');
+    const modalSaveBtn = document.getElementById('modalSaveBtn');
+    const bossNameList = document.getElementById('bossNameList');
+
+    const batchModalOverlay = document.getElementById('batchModalOverlay');
+    const batchList = document.getElementById('batchList');
+    const batchCount = document.getElementById('batchCount');
+
+    const volumeSlider = document.getElementById('volumeSlider');
+    const volumeDisplay = document.getElementById('volumeDisplay');
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
+    const toggleBtn = document.getElementById('toggleReminderBtn');
+    const remindMinutesSelect = document.getElementById('remindMinutes');
+
+    function setTimezone(tz) {
+        if (tz === timezone) return;
+        timezone = tz;
+
+        document.getElementById('tzJapan').className = 'btn-tz' + (tz === 'japan' ? ' active' : '');
+        document.getElementById('tzChina').className = 'btn-tz' + (tz === 'china' ? ' active' : '');
+
+        if (tz === 'japan') {
+            tzTagInline.textContent = '· 🇯🇵 日本';
+            tzTagInline.style.color = '#c4b5fd';
+            clockBadge.style.borderColor = '#7c6fd0';
+        } else {
+            tzTagInline.textContent = '· 🇨🇳 北京';
+            tzTagInline.style.color = '#fbbf24';
+            clockBadge.style.borderColor = '#d97706';
+        }
+
+        saveData();
+        renderTable();
+        showToast(tz === 'japan' ? '🇯🇵 已切换到日本时间' : '🇨🇳 已切换到北京时间');
+    }
+
+    function formatTimeByZone(timeStr) {
+        if (!timeStr) return '--';
+        const d = new Date(timeStr);
+        if (isNaN(d)) return '--';
+        
+        const tzMap = { japan: 'Asia/Tokyo', china: 'Asia/Shanghai' };
+        
+        const formatter = new Intl.DateTimeFormat('zh-CN', {
+            timeZone: tzMap[timezone] || 'Asia/Tokyo',
+            month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
+        });
+        
+        return formatter.format(d).replace(/\//g, '-');
+    }
+
+    function localTimeToISO(timeStr) {
+        if (!timeStr) return '';
+        if (timeStr.includes('Z') || timeStr.includes('+')) return timeStr;
+        const offset = timezone === 'japan' ? '+09:00' : '+08:00';
+        return new Date(timeStr + ':00' + offset).toISOString();
+    }
+
+    function isoToLocalInputValue(isoStr) {
+        if (!isoStr) return '';
+        const d = new Date(isoStr);
+        if (isNaN(d)) return '';
+        const tzMap = { japan: 'Asia/Tokyo', china: 'Asia/Shanghai' };
+        const parts = new Intl.DateTimeFormat('zh-CN', {
+            timeZone: tzMap[timezone],
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', hour12: false
+        }).formatToParts(d);
+        
+        const getPart = type => parts.find(p => p.type === type)?.value || '00';
+        return `${getPart('year')}-${getPart('month')}-${getPart('day')}T${getPart('hour')}:${getPart('minute')}`;
+    }
+
+    function getStorageKey() {
+        return mode === 'new' ? 'bossData_integrated_new' : 'bossData_integrated_old';
+    }
+
+    function createSnapshot() {
+        try {
+            const history = JSON.parse(localStorage.getItem('bossData_history') || '[]');
+            history.unshift({
+                time: new Date().toISOString(),
+                mode: mode,
+                bosses: JSON.parse(JSON.stringify(bosses))
+            });
+            localStorage.setItem('bossData_history', JSON.stringify(history.slice(0, 5)));
+        } catch (e) {}
+    }
+
+    function loadData() {
+        const stored = localStorage.getItem(getStorageKey());
+        if (stored) {
+            try {
+                const parsed = JSON.parse(stored);
+                if (parsed.bosses && Array.isArray(parsed.bosses) && parsed.bosses.length > 0) {
+                    bosses = parsed.bosses.map(b => ({ ...b, prob: getDefaultProb(b.name), zone: b.zone || getZone(b.name) }));
+                    remindedBosses = new Set(parsed._remindedBosses || []);
+                    stoppedFlashing = new Set(parsed._stoppedFlashing || []);
+                    remindedOther = new Set(parsed._remindedOther || []);
+                    if (parsed._timezone) timezone = parsed._timezone;
+                    return true;
+                }
+            } catch (e) {
+                console.warn('数据加载失败:', e);
+            }
+        }
+        return false;
+    }
+
+    function saveData() {
+        createSnapshot();
+        const dataToSave = {
+            bosses: bosses,
+            _remindedBosses: Array.from(remindedBosses),
+            _stoppedFlashing: Array.from(stoppedFlashing),
+            _remindedOther: Array.from(remindedOther),
+            _timezone: timezone
+        };
+        localStorage.setItem(getStorageKey(), JSON.stringify(dataToSave));
+    }
+
+    // ===== 区服负责人机制：多页面各管一区，避免同一 Boss 被播报两遍 =====
+    const PAGE_ID = 'pg' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const ownerKey = (m) => 'bossData_owner_' + m;
+
+    function getOwner(m) {
+        try {
+            const raw = localStorage.getItem(ownerKey(m));
+            if (!raw) return null;
+            const o = JSON.parse(raw);
+            if (!o || !o.pid) return null;
+            if (Date.now() - (o.ts || 0) > 30000) return null; // 心跳过期（页面已关闭）
+            return o;
+        } catch (e) { return null; }
+    }
+
+    function claimZone(m) {
+        try {
+            const o = getOwner(m);
+            if (o && o.pid !== PAGE_ID) return false; // 该区已有其他活跃页面负责
+            localStorage.setItem(ownerKey(m), JSON.stringify({ pid: PAGE_ID, ts: Date.now() }));
+            return true;
+        } catch (e) { return false; }
+    }
+
+    function heartbeatZones() {
+        ['new', 'old'].forEach(m => {
+            try {
+                const o = getOwner(m);
+                if (o && o.pid === PAGE_ID) {
+                    localStorage.setItem(ownerKey(m), JSON.stringify({ pid: PAGE_ID, ts: Date.now() }));
+                }
+            } catch (e) { /* ignore */ }
+        });
+    }
+
+    function releaseZones() {
+        ['new', 'old'].forEach(m => {
+            try {
+                const o = getOwner(m);
+                if (o && o.pid === PAGE_ID) localStorage.removeItem(ownerKey(m));
+            } catch (e) { /* ignore */ }
+        });
+    }
+
+    function switchMode(newMode) {
+        if (newMode === mode) return;
+        saveData();
+        mode = newMode;
+
+        tabNew.className = newMode === 'new' ? 'btn-tab-new active' : 'btn-tab-new';
+        tabOld.className = newMode === 'old' ? 'btn-tab-old active' : 'btn-tab-old';
+
+        const label = newMode === 'new' ? '🆕 新区' : '🕰️ 老区';
+        modeLabel.textContent = label;
+        modeLabel.style.color = newMode === 'new' ? '#60a5fa' : '#fbbf24';
+        appEl.className = 'app mode-' + newMode;
+
+        if (!loadData()) {
+            bosses = DEFAULT_BOSSES.map(b => ({ ...b, id: b.id || 'b' + Date.now() + Math.random() }));
+            saveData();
+        }
+
+        // 切换到新区后，认领当前页负责的区
+        claimZone(newMode);
+
+        renderTable();
+        showToast(`已切换到 ${newMode === 'new' ? '新区' : '老区'}，共 ${bosses.length} 个Boss`);
+    }
+
+    function toggleUploadMode() {
+        uploadEnabled = uploadModeCheck.checked;
+        if (uploadEnabled && !adminPassword) {
+            uploadEnabled = false;
+            uploadModeCheck.checked = false;
+            showToast('⚠️ 请先在「更多 → 管理员授权」输入密码');
+        }
+        if (uploadEnabled) {
+            modeTag.textContent = '✏️ 可上传';
+            modeTag.className = 'mode-tag';
+            syncFabWrap.style.display = 'block';
+            showToast('✅ 上传模式已开启，可以同步到云端');
+        } else {
+            modeTag.textContent = '🔒 不可上传';
+            modeTag.className = 'mode-tag readonly';
+            syncFabWrap.style.display = 'none';
+            showToast('🔒 上传模式已关闭，无法同步到云端');
+        }
+    }
+
+    async function syncToCloud() {
+        if (!uploadEnabled || !adminPassword) return showToast('⚠️ 请先启用上传模式并输入管理员密码');
+        cloudStatus.textContent='⏳ 同步中...';cloudStatus.className='cloud-status syncing';
+        try {
+            const data={bosses:bosses,_catalog:{version:2,zones:ZONE_OPTIONS,bosses:DEFAULT_BOSSES},
+                _remindedBosses:Array.from(remindedBosses),_stoppedFlashing:Array.from(stoppedFlashing),
+                mode:mode,updatedAt:new Date().toISOString()};
+            const response=await fetch('/api/boss?mode='+encodeURIComponent(mode),{
+                method:'PUT',headers:{'Content-Type':'application/json','X-Admin-Password':adminPassword},
+                body:JSON.stringify(data)});
+            if(!response.ok) throw new Error('HTTP '+response.status+' '+(await response.text()).slice(0,140));
+            cloudStatus.textContent='✅ 已同步';cloudStatus.className='cloud-status synced';
+            showToast('☁️ 云端同步成功，好友页面稍后会自动刷新');
+        } catch(e) {
+            cloudStatus.textContent='❌ 同步失败';cloudStatus.className='cloud-status error';
+            showToast('上传失败：'+e.message);
+        }
+    }
+    async function loadFromCloud() {
+        cloudStatus.textContent='⏳ 下载中...';cloudStatus.className='cloud-status syncing';
+        try {
+            const response=await fetch('/api/boss?mode='+encodeURIComponent(mode),{cache:'no-store'});
+            if(!response.ok) throw new Error('HTTP '+response.status);
+            const record=await response.json();
+            if(record && Array.isArray(record.bosses) && record.bosses.length) {
+                pushUndo('从云端下载');
+                if(record._catalog) applyCatalog(record._catalog);
+                bosses=record.bosses.map(b=>({...b,prob:getDefaultProb(b.name),zone:b.zone||getZone(b.name)}));
+                remindedBosses=new Set(record._remindedBosses||[]);
+                stoppedFlashing=new Set(record._stoppedFlashing||[]);
+                saveData();renderTable();
+                cloudStatus.textContent='✅ 已下载';cloudStatus.className='cloud-status synced';
+                showToast('📥 已从云端下载 '+bosses.length+' 条 Boss 数据');
+            } else throw new Error('云端记录为空');
+        } catch(e) {
+            cloudStatus.textContent='❌ 下载失败';cloudStatus.className='cloud-status error';
+            showToast('下载失败：'+e.message);
+        }
+    }
+
+    function playAlertSound(volume) {
+        try {
+            if (!audioCtx) audioCtx = new(window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
+            const vol = volume / 100;
+            const now = audioCtx.currentTime;
+            const frequencies = [880, 1100, 880, 1100, 880];
+            const durations = [0.15, 0.15, 0.15, 0.15, 0.3];
+            for (let i = 0; i < frequencies.length; i++) {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'square';
+                osc.frequency.value = frequencies[i];
+                gain.gain.setValueAtTime(vol * 0.25, now + i * 0.2);
+                gain.gain.exponentialRampToValueAtTime(vol * 0.01, now + i * 0.2 + durations[i]);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(now + i * 0.2);
+                osc.stop(now + i * 0.2 + durations[i]);
+            }
+        } catch (e) {}
+    }
+
+    function speakBossAlert(bossName, alertMode) {
+        try {
+            if ('speechSynthesis' in window) {
+                // 不再无条件 cancel()：多 Boss 排队时会把上一条播报打断（只听到开头"老/新"就断掉）
+                // 改为用 utterance.onend 播完一条再播下一条，保证完整播报
+                const prefix = (alertMode || mode) === 'new' ? '新区 ' : '老区 ';
+                const utterance = new SpeechSynthesisUtterance(prefix + bossName + '，即将刷新！');
+                utterance.lang = 'zh-CN';
+                utterance.rate = 0.85;
+                utterance.pitch = 1.1;
+                const volumeValue = parseInt(document.getElementById('volumeSlider').value) || 70;
+                utterance.volume = volumeValue / 100;
+
+                const advance = () => {
+                    if (speakQueue.length > 0) setTimeout(processSpeakQueue, 400);
+                    else isSpeaking = false;
+                };
+                utterance.onend = advance;
+                utterance.onerror = advance;
+
+                window.speechSynthesis.speak(utterance);
+
+                // 兜底：某些环境 TTS 不触发 onend，20 秒后强制继续队列，避免卡住
+                clearTimeout(window.__speakGuard);
+                window.__speakGuard = setTimeout(() => {
+                    if (speakQueue.length > 0) setTimeout(processSpeakQueue, 100);
+                    else isSpeaking = false;
+                }, 20000);
+            }
+        } catch (e) {
+            if (speakQueue.length > 0) setTimeout(processSpeakQueue, 500);
+            else isSpeaking = false;
+        }
+    }
+
+    // 当前区 + 另一区 的 Boss 全量（另一区实时读 localStorage，保证数据最新）
+    function getAllRemindableBosses() {
+        const list = bosses.map(b => ({ ...b, _mode: mode }));
+        const otherMode = mode === 'new' ? 'old' : 'new';
+        try {
+            const raw = localStorage.getItem('bossData_integrated_' + otherMode);
+            if (raw) {
+                const p = JSON.parse(raw);
+                if (p && Array.isArray(p.bosses)) {
+                    p.bosses.forEach(b => list.push({ ...b, _mode: otherMode }));
+                }
+            }
+        } catch (e) { /* ignore */ }
+        return list;
+    }
+
+    function processSpeakQueue() {
+        if (speakQueue.length === 0) { isSpeaking = false; return; }
+        isSpeaking = true;
+        const item = speakQueue.shift();
+        const isCur = item.mode === mode;
+        const marked = isCur ? remindedBosses.has(item.id) : remindedOther.has(item.key);
+        if (!item.name || marked) {
+            if (speakQueue.length > 0) setTimeout(processSpeakQueue, 500);
+            else isSpeaking = false;
+            return;
+        }
+        speakBossAlert(item.name, item.mode);
+        showDueGlass(item.name, item.mode);
+        if (isCur) remindedBosses.add(item.id);
+        else remindedOther.add(item.key);
+        // 多标签页防重：广播「已播报」标记，其他同时打开的页面收到后同步标记，避免重复播报
+        try {
+            localStorage.setItem('bossData_speak_broadcast', JSON.stringify({ key: item.key, at: Date.now() }));
+        } catch (err) { /* ignore */ }
+        saveData();
+        renderTable();
+        // 下一条播报由 speakBossAlert 的 utterance.onend 推进（播完一条再播下一条，不打断）
+    }
+
+    // Boss 到点玻璃框提醒：透明玻璃质感 + 向上凸起 + 放大字体，显示几秒后自动收起
+    let dueGlassTimer = null;
+    function showDueGlass(name, mode) {
+        const g = document.getElementById('dueGlass');
+        if (!g) return;
+        document.getElementById('dueGlassZone').textContent = mode === 'new' ? '🆕 新区' : '🕰️ 老区';
+        document.getElementById('dueGlassZone').className = 'due-zone ' + mode;
+        document.getElementById('dueGlassName').textContent = name;
+        g.classList.add('show');
+        clearTimeout(dueGlassTimer);
+        dueGlassTimer = setTimeout(hideDueGlass, 8000);
+    }
+    function hideDueGlass() {
+        const g = document.getElementById('dueGlass');
+        if (g) g.classList.remove('show');
+    }
+
+    function checkAndSpeak() {
+        const now = new Date();
+        const remindMs = parseInt(remindMinutesSelect.value) || 0;
+        const dueBosses = [];
+
+        // 新区 + 老区一起检查：两区的 Boss 到点都会语音提醒
+        const allBosses = getAllRemindableBosses();
+        for (const b of allBosses) {
+            if (!b.time) continue;
+            // 区服负责人机制：该区已有其他活跃页面负责播报时，本页跳过（避免两遍）
+            const owner = getOwner(b._mode);
+            if (owner && owner.pid !== PAGE_ID) continue;
+            const target = new Date(b.time);
+            const diffMs = target - now;
+            const key = b._mode + '|' + b.id;
+            const marked = b._mode === mode ? remindedBosses.has(b.id) : remindedOther.has(key);
+            if (marked || diffMs < 0) continue;
+            // 到点前提前量内触发；到点后 60 秒内仍可触发（防止 1 秒检查周期相位错开漏掉，靠已播报标记防重）
+            if (diffMs <= remindMs && diffMs > -60000) {
+                dueBosses.push({ boss: b, diffMs: diffMs, key: key });
+            }
+        }
+
+        dueBosses.sort((a, b) => a.diffMs - b.diffMs);
+        if (dueBosses.length === 0) return;
+
+        for (const item of dueBosses) {
+            const alreadyQueued = speakQueue.some(q => q.key === item.key);
+            const isCur = item.boss._mode === mode;
+            const alreadyMarked = isCur ? remindedBosses.has(item.boss.id) : remindedOther.has(item.key);
+            if (!alreadyQueued && !alreadyMarked) {
+                speakQueue.push({ key: item.key, id: item.boss.id, name: item.boss.name, mode: item.boss._mode });
+            }
+        }
+
+        if (!isSpeaking) processSpeakQueue();
+    }
+
+    function stopFlashing(bossId) {
+        stoppedFlashing.add(bossId);
+        speakQueue = speakQueue.filter(q => q.id !== bossId);
+        const b = bosses.find(x => x.id === bossId);
+        if (b) showToast('✅ 已确认 ' + b.name + ' 即将刷新');
+        saveData();
+        renderTable();
+    }
+
+    function renderTable() {
+        if (!bosses.length) {
+            tbody.innerHTML = `<tr><td colspan="6" class="empty-state">暂无Boss，点击 "新增Boss" 添加</td></tr>`;
+            bossCountSpan.textContent = '0';
+            return;
+        }
+
+        const now = new Date();
+        const remindMs = parseInt(remindMinutesSelect.value) || 0;
+        const sorted = [...bosses].sort((a, b) => {
+            const ta = new Date(a.time);
+            const tb = new Date(b.time);
+            if (!isNaN(ta) && isNaN(tb)) return -1;
+            if (isNaN(ta) && !isNaN(tb)) return 1;
+            return ta - tb;
+        });
+        // 未刷新 Boss 中排最前（最早到点）的那一个：名字标蓝高亮（只高亮一个）
+        let soonId = null;
+        for (const sb of sorted) {
+            const st = new Date(sb.time);
+            if (isNaN(st)) continue;
+            if (st.getTime() > now.getTime()) { soonId = sb.id; break; }
+        }
+
+        let html = '';
+        for (const b of sorted) {
+            const rawTarget = new Date(b.time);
+            const isInvalid = isNaN(rawTarget);
+            const diffMs = rawTarget - now;
+            const diffSec = diffMs / 1000;
+            const isPast = diffSec < 0;
+            const isReminded = remindedBosses.has(b.id);
+            // 闪红条件：未确认 + 有效时间 +（即将到点 或 已经过时间）
+            // 已过时间的 Boss 会一直闪红（长时间提示），直到点击名称确认（stopFlashing）
+            const shouldFlash = !stoppedFlashing.has(b.id) && !isInvalid && (diffMs <= remindMs || isPast);
+
+            let statusText, statusClass;
+            let countdownStr = '';
+
+            if (isInvalid) {
+                countdownStr = '--';
+                statusText = '未设置';
+                statusClass = 'badge-muted';
+            } else if (isPast) {
+                // 到点后 60 秒为"刷新窗口期"（游戏公告只有分钟精度，实际刷新可能晚 0~59 秒）
+                if (diffMs > -60000) {
+                    statusText = '🔥 刷新窗口';
+                    statusClass = 'badge-danger';
+                    countdownStr = '≤1分钟';
+                } else {
+                    statusText = '已刷新';
+                    statusClass = 'badge-muted';
+                    countdownStr = '⏰ 已过';
+                }
+            } else {
+                const hours = Math.floor(diffSec / 3600);
+                const minutes = Math.floor((diffSec % 3600) / 60);
+                const seconds = Math.floor(diffSec % 60);
+                countdownStr = `${hours}h ${minutes.toString().padStart(2, '0')}m ${seconds.toString().padStart(2, '0')}s`;
+                if (diffSec < 300) {
+                    statusText = isReminded ? '已语音提醒' : '即将刷新';
+                    statusClass = isReminded ? 'badge-reminded' : 'badge-danger';
+                } else if (diffSec < 1800) {
+                    statusText = '30分钟内';
+                    statusClass = 'badge-warning';
+                } else {
+                    statusText = '等待中';
+                    statusClass = 'badge';
+                }
+            }
+
+            const prob = getDefaultProb(b.name);
+            const probText = prob + '%';
+            // 100% 必刷 Boss 标识：柔和的红色渐变 + 左侧红竖条（降荧光感）
+            const pastStyle = (isPast && !isInvalid && diffMs < -60000) ? 'opacity:.55;' : '';
+            const rowStyle = (prob === 100)
+                ? `style="background:linear-gradient(90deg, rgba(232,105,105,.20), rgba(232,105,105,.10) 70%, rgba(232,105,105,.05)); border-left:3px solid #d98282; ${pastStyle}"`
+                : (pastStyle ? `style="${pastStyle}"` : '');
+            const probStyle = (prob === 100) ? 'style="color:#e58b8b; font-weight:bold;"' : '';
+            const fullBadge = (prob === 100) ? '<span class="badge badge-danger" style="margin-left:5px;">必刷</span>' : '';
+
+            let remindRowHtml = '';
+            if (!isPast && !isInvalid) {
+                remindRowHtml = isReminded
+                    ? `<span class="row-menu-item disabled">✓ 已语音</span>`
+                    : `<button class="row-menu-item" onclick="manualRemind('${b.id}')">🔔 手动提醒</button>`;
+            }
+
+            const displayTimeStr = formatTimeByZone(b.time);
+            // 到点后 5 分钟内：名字毛玻璃放大（刚刷提醒）；到点前 5 分钟内：名字变蓝（马上要刷）
+            const windowGlass = (isPast && !isInvalid && diffMs > -60000);
+            const soonBlue = (b.id === soonId);
+            const flashText = isPast ? ' 🔴 已刷新！点击确认' : ' 🔴 即将刷新！点击确认';
+            const nameHtml = windowGlass ? `<span class="boss-window">${b.name}</span>` : b.name;
+
+            html += `
+                <tr ${rowStyle}>
+                    <td class="boss-zone">${getZone(b.name)}</td>
+                    <td class="boss-name ${soonBlue ? 'boss-soon' : ''}" data-boss-id="${b.id}" onclick="stopFlashing('${b.id}')" title="${shouldFlash ? flashText : ''}">${nameHtml}</td>
+                    <td>
+                        <div class="actions">
+                            <button class="btn-sm kill" onclick="recordKill('${b.id}')" title="记录击杀">⚔️</button>
+                            <button class="btn-sm delay" onclick="delayBoss('${b.id}')" title="顺延刷新">⟳</button>
+                            <div class="row-more">
+                                <button class="btn-sm row-more-btn" onclick="toggleRowMenu('${b.id}', event)" title="更多操作">⋯</button>
+                                <div class="row-menu" id="rowMenu_${b.id}">
+                                    <button class="row-menu-item" onclick="editBoss('${b.id}')">✎ 编辑</button>
+                                    ${remindRowHtml}
+                                    <button class="row-menu-item danger" onclick="delBoss('${b.id}')">🗑 删除</button>
+                                </div>
+                            </div>
+                        </div>
+                    </td>
+                    <td>${displayTimeStr}</td>
+                    <td class="countdown ${isPast ? 'text-muted' : ''}">${countdownStr}</td>
+                    <td><span class="badge ${statusClass}">${statusText}</span> <span ${probStyle}>${probText}</span>${fullBadge}</td>
+                </tr>
+            `;
+        }
+
+        tbody.innerHTML = html;
+        bossCountSpan.textContent = sorted.length;
+    }
+
+    function updateCountdownOnly() {
+        const now = new Date();
+        // 未刷新 Boss 中最早到点的那个：名字变蓝（只高亮一个，每秒重算）
+        let soonId = null, soonT = Infinity;
+        for (const sb of bosses) {
+            if (!sb.time) continue;
+            const st = new Date(sb.time).getTime();
+            if (isNaN(st) || st <= now.getTime()) continue;
+            if (st < soonT) { soonT = st; soonId = sb.id; }
+        }
+        const rows = tbody.querySelectorAll('tr');
+        rows.forEach(row => {
+            const nameEl = row.querySelector('.boss-name');
+            if (!nameEl) return;
+            const bossId = nameEl.getAttribute('data-boss-id');
+            const b = bosses.find(x => x.id === bossId);
+            if (!b || !b.time) return;
+
+            const diffSec = (new Date(b.time) - now) / 1000;
+            // 最早到点的未刷新 Boss：名字变蓝
+            if (bossId === soonId) nameEl.classList.add('boss-soon');
+            else nameEl.classList.remove('boss-soon');
+            // 已过 5 分钟（毛玻璃消失）的 Boss 行整体淡化，名字变暗区分（每秒同步）
+            if (diffSec < -60) row.style.opacity = '0.5';
+            else row.style.opacity = '';
+            // 毛玻璃窗口同步：到点后 1 分钟内 Boss 名保持毛玻璃放大，超时恢复普通
+            const inWin = diffSec < 0 && diffSec > -60;
+            const winSpan = nameEl.querySelector('.boss-window');
+            if (inWin && !winSpan) {
+                const sp = document.createElement('span');
+                sp.className = 'boss-window';
+                sp.textContent = nameEl.textContent;
+                nameEl.textContent = '';
+                nameEl.appendChild(sp);
+            } else if (!inWin && winSpan) {
+                nameEl.textContent = winSpan.textContent;
+            }
+            const countdownTd = row.querySelector('.countdown');
+            if (countdownTd) {
+                if (diffSec < 0) {
+                    if (diffSec > -60) {
+                        // 刷新窗口期：游戏公告只有分钟精度，实际刷新可能晚 0~59 秒
+                        countdownTd.textContent = '🔥 ≤1分钟';
+                        countdownTd.classList.remove('text-muted');
+                    } else {
+                        countdownTd.textContent = '⏰ 已过';
+                        countdownTd.classList.add('text-muted');
+                    }
+                } else {
+                    const h = Math.floor(diffSec / 3600);
+                    const m = Math.floor((diffSec % 3600) / 60);
+                    const s = Math.floor(diffSec % 60);
+                    countdownTd.textContent = `${h}h ${m.toString().padStart(2, '0')}m ${s.toString().padStart(2, '0')}s`;
+                    countdownTd.classList.remove('text-muted');
+                }
+            }
+        });
+    }
+
+    function updateClock() {
+        const now = new Date();
+        const pad = n => n.toString().padStart(2, '0');
+        timeDisplay.textContent = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+        if (reminderEnabled) checkAndSpeak();
+        updateCountdownOnly();
+        if (document.getElementById('mergeModalOverlay').style.display === 'flex') updateMergeCountdown();
+    }
+
+    function recordKill(id) {
+        const b = bosses.find(x => x.id === id);
+        if (!b || !b.interval) return showToast('请先设置刷新间隔');
+        pushUndo('记录击杀「' + b.name + '」');
+        remindedBosses.delete(id);
+        stoppedFlashing.delete(id);
+        const next = new Date(Date.now() + b.interval * 60 * 60 * 1000);
+        b.time = next.toISOString();
+        saveData();
+        renderTable();
+        showToast(`⚔️ ${b.name} 已记录击杀，下次刷新 ${formatTimeByZone(b.time)}`);
+    }
+
+    function delayBoss(id) {
+        const b = bosses.find(x => x.id === id);
+        if (!b || !b.interval) return showToast('请先设置刷新间隔');
+        pushUndo('顺延「' + b.name + '」');
+        remindedBosses.delete(id);
+        stoppedFlashing.delete(id);
+        const current = new Date(b.time || Date.now());
+        const next = new Date(current.getTime() + b.interval * 60 * 60 * 1000);
+        b.time = next.toISOString();
+        saveData();
+        renderTable();
+        showToast(`⟳ ${b.name} 已顺延 ${b.interval}h`);
+    }
+
+    function delayAllPastUnupdated() {
+        const now = new Date();
+        const updatedNames = new Set(batchUpdatedNames || []);
+        let delayList = [];
+
+        for (const b of bosses) {
+            if (!b.time) continue;
+            if (new Date(b.time) < now && !updatedNames.has(b.name) && b.interval > 0) {
+                delayList.push(b);
+            }
+        }
+
+        if (delayList.length === 0) return showToast('✅ 没有需要顺延的已过Boss');
+
+        if (confirm(`发现 ${delayList.length} 个已过 Boss，确定全部顺延吗？`)) {
+            pushUndo('批量顺延 ' + delayList.length + ' 个 Boss');
+            for (const b of delayList) {
+                remindedBosses.delete(b.id);
+                stoppedFlashing.delete(b.id);
+                let next = new Date(b.time);
+                while (next <= now) next = new Date(next.getTime() + b.interval * 60 * 60 * 1000);
+                b.time = next.toISOString();
+            }
+            saveData();
+            renderTable();
+            showToast(`⟳ 已顺延 ${delayList.length} 个Boss`);
+        }
+    }
+
+    // ★ 智能解析：兼容「截图 OCR 分块文本」与「一行一条记录」两种格式 ★
+    // 支持：名称行与时间行分离 / 击退+出没同行或拆行 / 时间带空格(22时 28分) / 仅击退时间(自动按间隔算下次)
+    // ===== 文本解析（公共：手动粘贴解析 与 屏幕识别 共用）=====
+    function parseWechatOcrText(text, silent) {
+        const lines = String(text || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+        const dateRe = /(20\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日\s*(\d{1,2})\s*时\s*(\d{1,2})\s*分/g;
+        const names = [], times = [];
+        let other = 0, participants = 0, dateLines = 0;
+        for (const line of lines) {
+            if (/^参与\s*[（(]\s*\d+\s*[）)]$/.test(line)) { participants++; continue; }
+            // 允许已知 Boss 名中被 OCR 插入空格；不做模糊猜测。
+            const stripped = line.replace(/\s/g, '');
+            if (DEFAULT_BOSSES.some(x => x.name === stripped)) { names.push(stripped); continue; }
+            const matches = [...line.matchAll(dateRe)];
+            if (matches.length) {
+                dateLines++;
+                const residue = line.replace(dateRe, '').replace(/[\s，,、；;]/g,'');
+                if (residue) { other++; continue; }
+                for (const m of matches) {
+                    const year=Number(m[1]),month=Number(m[2]),day=Number(m[3]),hour=Number(m[4]),minute=Number(m[5]);
+                    const utc = Date.UTC(year,month-1,day,hour,minute);
+                    const d = new Date(utc);
+                    if (d.getUTCFullYear()!==year || d.getUTCMonth()!==month-1 || d.getUTCDate()!==day || d.getUTCHours()!==hour || d.getUTCMinutes()!==minute) return {error:'发现无效日期或时间，请检查微信识别文字'};
+                    times.push(utc-(timezone==='japan'?9:8)*3600000);
+                }
+            } else other++;
+        }
+        // 没有完整的分列结构时交由旧解析器；像此类分列结构解析失败时宁可拒绝更新。
+        const columnar = participants>0 || (names.length>1 && dateLines>0 && lines.findIndex(l=>l.replace(/\s/g,'')===names[0])<lines.findIndex(l=>/(20\d{2})\s*年/.test(l)));
+        dateRe.lastIndex=0;
+        if (!columnar) return null;
+        if (!names.length || !times.length || other) return {error:`文本中有 ${other} 行无法识别，或缺少完整名称/日期；请先核对微信提取文字`};
+        if (participants && participants!==names.length) return {error:`Boss ${names.length} 个，但参与人数 ${participants} 项，请核对是否有遗漏行`};
+        if (times.length < names.length || times.length > names.length*2) return {error:`Boss ${names.length} 个，日期 ${times.length} 个，无法可靠对应`};
+        // 从前到后动态规划。每个 Boss 必须消耗一个击退时间，第二个时间仅在刷新间隔严格吻合时视作出没时间。
+        const memo = new Map();
+        function resolve(i,j) {
+            const key=i+','+j;
+            if (memo.has(key)) return memo.get(key);
+            if (i===names.length) return j===times.length ? {score:0,rows:[],ways:1} : null;
+            if (j>=times.length) return null;
+            const def=DEFAULT_BOSSES.find(b=>b.name===names[i]);
+            const remain=names.length-i-1;
+            let best=null;
+            for (const span of [1,2]) {
+                if (span===2) {
+                    if(j+1>=times.length) continue;
+                    const hours=(times[j+1]-times[j])/3600000;
+                    if (Math.abs(hours-def.interval)>0.035) continue; // 允许最多约两分钟偏差
+                }
+                if (times.length-(j+span)<remain || times.length-(j+span)>remain*2) continue;
+                // 截图列表一般按照击退时间从新到旧排列。违反时保持可用，但提示复核。
+                const following=resolve(i+1,j+span);
+                if(!following) continue;
+                const current={name:names[i],kill:times[j],spawn:span===2?times[j+1]:null};
+                let score=following.score+(span===2?10:0);
+                if(following.rows.length && current.kill<following.rows[0].kill) score-=15;
+                if(!best || score>best.score) best={score,rows:[current,...following.rows],ways:following.ways};
+                else if(score===best.score) best.ways=Math.min(999,best.ways+following.ways);
+            }
+            memo.set(key,best); return best;
+        }
+        const solution=resolve(0,0);
+        if(!solution) return {error:'日期无法按 Boss 顺序和预设刷新间隔匹配，已阻止可能的错位更新'};
+        const ambiguous = solution.ways > 1;
+        let results=solution.rows.map((r,i)=>{
+            const cfg=DEFAULT_BOSSES.find(x=>x.name===r.name);
+            const existing=bosses.find(x=>x.name===r.name);
+            const next=r.spawn??r.kill+cfg.interval*3600000;
+            return {name:r.name,killAt:r.kill,nextTime:new Date(next).toISOString(),interval:cfg.interval,prob:cfg.prob,
+                hasSpawn:r.spawn!=null,isNew:!existing,knownInterval:cfg.interval,presetInterval:cfg.interval,
+                mismatch:false,olderThanLocal:!!(existing?.time && new Date(existing.time).getTime()>next),fromWechat:true,ocrRow:i+1,
+                ambiguous:ambiguous, warnings:ambiguous?['多个时间归组方案同样合理，需人工确认']:[]};
+        });
+        // 同名旧截图记录只保留最新击退事件。
+        const distinct=new Map();
+        for(const r of results) {
+            const prev=distinct.get(r.name);
+            if (prev) {
+                r.duplicate=true; prev.duplicate=true;
+                r.warnings.push('截图中出现同名 Boss 多条记录，已只保留最新击退时间');
+            }
+            if(!prev||r.killAt>prev.killAt) distinct.set(r.name,r);
+        }
+        results=[...distinct.values()];
+        // 重复名字无论采用哪条都需要先人工核对（不自动勾选）。
+        for(const r of results) if(r.duplicate) {r.warnings.push('同名多条数据：请确认所需的击退记录');}
+        return {results};
+    }
+
+    function parseTextToResults(text, silent) {
+        const wx=parseWechatOcrText(text,silent);
+        if(wx) { if(wx.error){ if(!silent) showToast("⚠️ "+wx.error); return []; } return wx.results; }
+
+        if (!text) return [];
+
+        const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        const currentOffset = timezone === 'japan' ? '+09:00' : '+08:00';
+
+        // 宽松时间格式：兼容 年月日时分 中文/符号/空格分隔
+        const timeRegex = /(\d{4})\s*[年.\-\/]\s*(\d{1,2})\s*[月.\-\/]\s*(\d{1,2})\s*[日号]?\s*(\d{1,2})\s*[时:：]\s*(\d{1,2})\s*分?/g;
+
+        // 清洗一行文本 → 提取名称（去掉时间、参与人数、标点噪音）
+        const cleanName = (s) => {
+            let n = String(s)
+                .replace(timeRegex, '')
+                .replace(/参与者?/g, '')
+                .replace(/参与\(?\d+\)?/g, '')
+                .replace(/[（(]\d+[）)]/g, '')
+                .replace(/[，,、。.．：:；;！!？?\s]/g, '')
+                .trim();
+            // 必须含中文字符才算名称：过滤纯数字/纯英文等 OCR 噪音（如道具数量"60"、乱码"LE"）
+            if (!/[\u4e00-\u9fa5]/.test(n)) return '';
+            return n;
+        };
+
+        // 第 1 步：逐行分类收集
+        //   - 含时间的行 → 提取时间事件（每行可能 1~2 个：击退 / 出没）
+        //   - 不含时间的行 → 名称候选（OCR 分块布局中名称单独成行）
+        const namePool = [];   // 名称候选（按出现顺序）
+        const events = [];     // 时间事件 { ts, line, inlineName, lineIdx }
+        for (let li = 0; li < lines.length; li++) {
+            const line = lines[li];
+            if (line.includes('首领') || line.includes('道具') || line.includes('次元') || line.includes('出没')) continue;
+            const timeMatches = [...line.matchAll(timeRegex)];
+            if (timeMatches.length > 0) {
+                // 该行剩余文本中若有名称（兼容旧格式「名称+时间同行」），绑定给第一个时间
+                const inlineName = cleanName(line);
+                timeMatches.forEach((mm, idx) => {
+                    const year = mm[1].padStart(2, '0'), month = mm[2].padStart(2, '0'), day = mm[3].padStart(2, '0');
+                    const hour = mm[4].padStart(2, '0'), minute = mm[5].padStart(2, '0');
+                    events.push({
+                        ts: new Date(`${year}-${month}-${day}T${hour}:${minute}:00${currentOffset}`).getTime(),
+                        inlineName: idx === 0 ? inlineName : '',
+                        lineIdx: li,
+                    });
+                });
+            } else {
+                const n = cleanName(line);
+                if (n) namePool.push(n);
+            }
+        }
+
+        // 第 2 步：时间事件配对（击退 → 出没）
+        // 阶段 1：行内配对——同一行解析出的两个时间必然属于同一 Boss（最可靠信号）
+        // 阶段 2：跨行贪心——剩余事件按相邻顺序、间隔 0.1~240h 配对；配不上作为「仅击退时间」
+        const used = new Set();
+        const recs = [];
+        const makeRec = (i, j) => {
+            used.add(i);
+            if (j != null) used.add(j);
+            recs.push({
+                kill: events[i].ts,
+                spawn: j != null ? events[j].ts : null,
+                hours: j != null ? Math.round(((events[j].ts - events[i].ts) / 3600000) * 10) / 10 : null,
+                inlineName: events[i].inlineName,
+            });
+        };
+        // 阶段 1：行内配对（同一 lineIdx）
+        for (let i = 0; i < events.length; i++) {
+            if (used.has(i)) continue;
+            let paired = -1;
+            for (let j = i + 1; j < events.length; j++) {
+                if (used.has(j) || events[j].lineIdx !== events[i].lineIdx) continue;
+                const hours = (events[j].ts - events[i].ts) / 3600000;
+                if (hours <= 0 || hours > 240) continue;
+                paired = j;
+                break;
+            }
+            if (paired >= 0) makeRec(i, paired);
+        }
+        // 阶段 2：跨行贪心
+        for (let i = 0; i < events.length; i++) {
+            if (used.has(i)) continue;
+            let paired = -1;
+            for (let j = i + 1; j < events.length; j++) {
+                if (used.has(j)) continue;
+                const hours = (events[j].ts - events[i].ts) / 3600000;
+                if (hours <= 0 || hours > 240) continue;
+                if (j - i > 3) break; // 最多跨 3 个事件，避免错配
+                paired = j;
+                break;
+            }
+            if (paired >= 0) makeRec(i, paired);
+            else makeRec(i, null);
+        }
+
+        // 第 3 步：名称分配（优先"间隔指纹"匹配，其次按顺序兜底）
+        recs.sort((a, b) => b.kill - a.kill);
+        const unnamed = [];
+        for (const r of recs) {
+            if (r.inlineName) r.name = r.inlineName;
+            else unnamed.push(r);
+        }
+        if (unnamed.length > 0) {
+            // 构建 名称 → 已知间隔/几率 映射（默认配置 + 本地记录；本地自定义优先）
+            const knownMap = new Map();
+            for (const b of DEFAULT_BOSSES) {
+                if (!knownMap.has(b.name)) knownMap.set(b.name, { interval: b.interval, prob: b.prob });
+            }
+            for (const b of bosses) {
+                if (!knownMap.has(b.name)) knownMap.set(b.name, { interval: b.interval, prob: b.prob });
+                else if (b.interval) knownMap.get(b.name).interval = b.interval;
+            }
+            const pool = [...namePool];
+            // 方向择优：公告排列可能是「新→旧」或「旧→新」，两个方向各绑定一次，选间隔命中率高的
+            const tryBind = (rev) => {
+                const p = rev ? [...pool].reverse() : pool;
+                const taken = new Set(), assigned = new Set();
+                const names = new Array(unnamed.length).fill('');
+                let hits = 0;
+                // 第 1 轮：成对记录用「实际间隔 ≈ 已知间隔」匹配名称（间隔是强特征，抗 OCR 顺序错位）
+                for (let i = 0; i < unnamed.length; i++) {
+                    const r = unnamed[i];
+                    if (!r.hours) continue;
+                    let best = -1, bestDiff = 1.5; // 容差 1.5h
+                    for (let pi = 0; pi < p.length; pi++) {
+                        if (taken.has(pi)) continue;
+                        const k = knownMap.get(p[pi]);
+                        if (!k || !k.interval) continue;
+                        const d = Math.abs(k.interval - r.hours);
+                        if (d < bestDiff) { bestDiff = d; best = pi; }
+                    }
+                    if (best >= 0) {
+                        names[i] = p[best]; taken.add(best); assigned.add(i);
+                        if (bestDiff < 0.6) hits++;
+                    }
+                }
+                // 第 2 轮：剩余记录（仅击退/未知间隔）按名称池顺序补位，跳过已匹配的
+                let pi = 0;
+                for (let i = 0; i < unnamed.length; i++) {
+                    if (assigned.has(i)) continue;
+                    while (pi < p.length && taken.has(pi)) pi++;
+                    if (pi < p.length) { names[i] = p[pi]; taken.add(pi); }
+                    pi++;
+                }
+                return { names, hits };
+            };
+            const fwd = tryBind(false), rev = tryBind(true);
+            const useRev = rev.hits > fwd.hits;
+            for (let i = 0; i < unnamed.length; i++) {
+                unnamed[i].name = (useRev ? rev.names : fwd.names)[i] || '';
+            }
+            // 数量校验：名称与记录对不上时提示核对，避免错位
+            if (namePool.length !== unnamed.length && !silent) {
+                showToast(`⚠️ 名称 ${namePool.length} 个 / 记录 ${unnamed.length} 条，数量不一致，请核对后导入`);
+            }
+        }
+
+        // 第 4 步：生成批量结果（间隔：实际成对时间 > 已有记录 > 默认配置；仅击退用默认间隔算下次刷新）
+        let results = [];
+        for (const r of recs) {
+            if (!r.name) continue;
+            const existing = bosses.find(b => b.name === r.name);
+            const defaultBoss = DEFAULT_BOSSES.find(b => b.name === r.name);
+            const knownInterval = existing ? existing.interval : (defaultBoss ? defaultBoss.interval : null);
+            const presetInterval = defaultBoss ? defaultBoss.interval : null;
+            let interval = r.hours || knownInterval;
+            let prob = defaultBoss ? defaultBoss.prob : 50;
+            if (!interval || interval <= 0) continue;
+
+            const nextTime = new Date(r.kill + interval * 60 * 60 * 1000).toISOString();
+            // 一致性校验：成对时间识别出的间隔 与 已知间隔 明显不符（差 > 1.5h）→ 标记异常
+            // （通常是 OCR 跨行错配导致的「击退 + 间隔 ≠ 下次刷新」矛盾，不能默默导入）
+            const mismatch = !!(r.hours && knownInterval && Math.abs(r.hours - knownInterval) > 1.5);
+            // 旧数据保护：解析出的下次刷新时间早于本地已记录时间 → 大概率是旧截图数据，默认跳过（用户可主动勾选覆盖）
+            const olderThanLocal = !!(existing && new Date(nextTime).getTime() < new Date(existing.time).getTime());
+            results.push({
+                name: r.name,
+                killAt: r.kill,
+                nextTime: nextTime,
+                interval: interval,
+                prob: prob,
+                isNew: !existing,
+                hasSpawn: r.spawn != null,
+                knownInterval: knownInterval,
+                presetInterval: presetInterval,
+                mismatch: mismatch,
+                olderThanLocal: olderThanLocal,
+            });
+        }
+
+        // 去重保护：同一 Boss 在同一次粘贴中出现多条时，只保留「击退时间（本次击杀）最新」的一条
+        let dedupCount = 0;
+        const seen = new Map();
+        for (const r of results) {
+            const prev = seen.get(r.name);
+            if (!prev || r.killAt > prev.killAt) {
+                if (prev) dedupCount++;
+                seen.set(r.name, r);
+            } else {
+                dedupCount++;
+            }
+        }
+        results = [...seen.values()];
+        if (dedupCount > 0 && !silent) showToast(`🔁 检测到 ${dedupCount} 条重复记录，已自动保留最新时间`);
+
+        return results;
+    }
+
+    function parseAndUpdate() {
+        const text = document.getElementById('pasteInput').value.trim();
+        if (!text) return showToast('请先粘贴文本');
+        const results = parseTextToResults(text, false);
+        if (results.length === 0) return showToast('⚠️ 未能识别出 Boss 数据');
+        batchPending = results;
+        batchUpdatedNames = results.map(r => r.name);
+        renderBatchModal(results);
+    }
+
+    function assessImportRow(r) {
+        const issues = [...(r.warnings || [])];
+        if (r.mismatch) issues.push('游戏显示的刷新间隔与预设不一致');
+        if (r.olderThanLocal) issues.push('该时间早于本地当前记录，可能是旧截图');
+        if (r.ambiguous && !issues.some(x=>x.includes('归组'))) issues.push('时间对应关系存在歧义');
+        if (r.duplicate && !issues.some(x=>x.includes('同名'))) issues.push('存在同名重复记录');
+        if (!r.nextTime || !Number.isFinite(new Date(r.nextTime).getTime())) issues.push('刷新时间无效');
+        if (!r.name || !DEFAULT_BOSSES.some(x=>x.name===r.name)) issues.push('Boss 名称不在预设列表');
+        if (!r.hasSpawn && !(r.presetInterval>0)) issues.push('没有出没时间且无法计算刷新间隔');
+        return [...new Set(issues)];
+    }
+
+    function renderBatchModal(results) {
+        batchCount.textContent = results.length;
+        const checked = results.filter(r=>assessImportRow(r).length===0).length;
+        let html = `<div style="font-size:12px;color:#9daabe;margin:0 0 8px;">✅ ${checked} 条已自动勾选${results.length>checked?` · <span style="color:#fbbf24">⚠️ ${results.length-checked} 条待确认</span>`:''}</div>`;
+        for (let i=0;i<results.length;i++) {
+            const r=results[i], issues=assessImportRow(r), safe=issues.length===0;
+            const status=r.isNew?'🆕 新增':'📝 更新';
+            const next=r.nextTime?formatTimeByZone(r.nextTime):'时间无效';
+            html+=`<div class="batch-item" style="gap:8px;align-items:flex-start;padding:${safe?'7px 2px':'9px 7px'};${safe?'':'background:rgba(245,158,11,.075);border-left:2px solid #fbbf24;border-radius:6px;'}">
+                <input type="checkbox" ${safe?'checked':''} id="batch_${i}" style="margin-top:3px;flex-shrink:0" />
+                <label for="batch_${i}" style="margin:0;font-weight:500;cursor:pointer;flex:1;min-width:0;line-height:1.45;">
+                    <span style="color:${safe?'#dce5f2':'#fbbf24'}">${htmlEscape(r.name)}</span><span style="color:#9ca3af"> → 下次刷新: ${next} (间隔${r.interval}h)</span> <span class="status">${status}</span>
+                    ${issues.length?`<div style="color:#fbbf24;font-size:11px;margin-top:4px;">⚠️ ${issues.join('；')}</div>`:''}
+                </label>
+            </div>`;
+        }
+        batchList.innerHTML=html;
+        batchModalOverlay.style.display='flex';
+    }
+
+    function closeBatchModal() {
+        batchModalOverlay.style.display = 'none';
+        batchPending = [];
+    }
+
+    function confirmBatchUpdate() {
+        const checkboxes = batchList.querySelectorAll('input[type="checkbox"]');
+        let updatedCount = 0;
+
+        // 用户勾选异常记录时，再做一次显式确认。
+        const risky = batchPending.filter((r,i)=>checkboxes[i]?.checked && assessImportRow(r).length);
+        if (risky.length) {
+            const detail=risky.map(r=>`${r.name}：${assessImportRow(r).join('；')}`).join('\n');
+            if (!confirm(`⚠️ 你手动选择了 ${risky.length} 条异常记录：\n\n${detail}\n\n确定仍要覆盖本地数据吗？`)) return;
+        }
+
+        if (![...checkboxes].some(x=>x.checked)) return showToast('请先勾选核对无误的 Boss 记录');
+        pushUndo('批量解析更新（' + batchPending.length + ' 条）');
+
+        for (let i = 0; i < batchPending.length; i++) {
+            if (checkboxes[i] && checkboxes[i].checked) {
+                const r = batchPending[i];
+                const existing = bosses.find(b => b.name === r.name);
+                if (existing) {
+                    // 用户主动在批量面板确认导入，以解析数据为准直接覆盖（面板有勾选确认 + 撤销兜底）
+                    remindedBosses.delete(existing.id);
+                    stoppedFlashing.delete(existing.id);
+                    existing.time = r.nextTime;
+                    existing.interval = r.interval;
+                    // 几率固定，不覆盖（跟随默认配置）
+                } else {
+                    bosses.push({
+                        id: 'b' + Date.now() + Math.random().toString(36).slice(2, 6),
+                        name: r.name, time: r.nextTime, interval: r.interval, prob: getDefaultProb(r.name)
+                    });
+                }
+                updatedCount++;
+            }
+        }
+
+        saveData();
+        renderTable();
+        closeBatchModal();
+        document.getElementById('pasteInput').value = '';
+        showToast(`✅ 已更新 ${updatedCount} 个Boss`);
+    }
+
+    function openAddModal() {
+        editingId = null;
+        modalTitle.textContent = '新增 Boss';
+        inputName.value = ''; inputKillTime.value = ''; inputTime.value = '';
+        inputInterval.value = ''; inputProb.value = '';
+        inputZone.value = getZone(inputName.value) || ZONE_OPTIONS[0];
+        bossNameList.innerHTML = DEFAULT_BOSSES.map(b => `<option value="${b.name}">`).join('');
+        modalOverlay.style.display = 'flex';
+    }
+
+    function editBoss(id) {
+        const b = bosses.find(x => x.id === id);
+        if (!b) return;
+        editingId = id;
+        modalTitle.textContent = '编辑 Boss';
+        inputName.value = b.name;
+        inputKillTime.value = '';
+        inputTime.value = isoToLocalInputValue(b.time);
+        inputInterval.value = b.interval || '';
+        inputProb.value = b.prob || '';
+        inputZone.value = b.zone || getZone(b.name) || ZONE_OPTIONS[0];
+        bossNameList.innerHTML = DEFAULT_BOSSES.map(b => `<option value="${b.name}">`).join('');
+        modalOverlay.style.display = 'flex';
+    }
+
+    function closeModal() { modalOverlay.style.display = 'none'; editingId = null; }
+
+    function saveBoss() {
+        const name = inputName.value.trim();
+        const rawTime = inputTime.value;
+        const interval = parseInt(inputInterval.value);
+        const prob = getDefaultProb(name); // 刷新几率由配置管理维护
+        const zone = inputZone.value || getZone(name) || '';
+
+        if (!name || !rawTime) return showToast('请将Boss名称和时间填写完整');
+        if (isNaN(interval) || interval < 1) return showToast('请输入有效的刷新间隔');
+
+        const time = localTimeToISO(rawTime);
+
+        // 重名检测：当前区已有同名 Boss（排除编辑中的自己）→ 更新原记录而不是新增，避免重复数据
+        const existing = bosses.find(b => b.name === name && b.id !== editingId);
+        if (existing) {
+            pushUndo('更新同名 Boss「' + name + '」');
+            Object.assign(existing, { time, interval, prob, zone });
+            // 若处于编辑模式且编辑的是另一条记录 → 移除编辑中的那条，避免残留重复
+            if (editingId) {
+                const dupIdx = bosses.findIndex(b => b.id === editingId);
+                if (dupIdx >= 0) bosses.splice(dupIdx, 1);
+            }
+            remindedBosses.delete(existing.id);
+            stoppedFlashing.delete(existing.id);
+            saveData();
+            closeModal();
+            renderTable();
+            showToast('⚠️ 已存在同名 Boss，已更新原记录');
+            return;
+        }
+
+        pushUndo(editingId ? '编辑 Boss「' + name + '」' : '新增 Boss「' + name + '」');
+
+        if (editingId) {
+            const idx = bosses.findIndex(b => b.id === editingId);
+            if (idx !== -1) bosses[idx] = { ...bosses[idx], name, time, interval, prob, zone };
+        } else {
+            bosses.push({ id: 'b' + Date.now() + Math.random().toString(36).slice(2, 6), name, time, interval, prob, zone });
+        }
+
+        saveData();
+        closeModal();
+        renderTable();
+        showToast('✅ 已保存');
+    }
+
+    function importData(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = function(evt) {
+            try {
+                const data = JSON.parse(evt.target.result);
+                if (data.bosses) {
+                    pushUndo('导入备份');
+                    bosses = data.bosses.map(b => ({ ...b, prob: getDefaultProb(b.name), zone: b.zone || getZone(b.name) }));
+                    saveData();
+                    renderTable();
+                    showToast('✅ 导入成功');
+                }
+            } catch (err) { showToast('❌ 文件解析失败'); }
+        };
+        reader.readAsText(file);
+    }
+
+    function resetDefaultData() {
+        if (confirm('确定要恢复默认数据吗？')) {
+            pushUndo('恢复默认数据');
+            bosses = DEFAULT_BOSSES.map(b => ({ ...b, id: 'b' + Date.now() + Math.random() }));
+            remindedBosses.clear();
+            stoppedFlashing.clear();
+            saveData();
+            renderTable();
+            showToast('已恢复默认数据');
+        }
+    }
+
+    function toggleReminder() {
+        reminderEnabled = !reminderEnabled;
+        statusDot.className = reminderEnabled ? 'status-dot' : 'status-dot paused';
+        statusText.textContent = reminderEnabled ? '运行中' : '已暂停';
+        toggleBtn.textContent = reminderEnabled ? '⏸ 暂停' : '▶ 继续';
+    }
+
+    function clearAllReminded() {
+        const cnt = remindedBosses.size + remindedOther.size;
+        remindedBosses.clear();
+        stoppedFlashing.clear();
+        remindedOther.clear();   // 同时清除另一区的提醒标记
+        saveData();
+        renderTable();
+        showToast(`✅ 已清除 ${cnt} 个 Boss 提醒标记`);
+    }
+
+    /* ===== 撤销功能：操作前快照栈 ===== */
+    function pushUndo(label) {
+        try {
+            const stack = JSON.parse(localStorage.getItem('bossData_undo_stack') || '[]');
+            stack.push({ label: label || '上一步操作', mode: mode, time: Date.now(), bosses: JSON.parse(JSON.stringify(bosses)) });
+            localStorage.setItem('bossData_undo_stack', JSON.stringify(stack.slice(-10)));
+        } catch (e) { /* ignore */ }
+        updateUndoState();
+    }
+
+    function undoLast() {
+        try {
+            const stack = JSON.parse(localStorage.getItem('bossData_undo_stack') || '[]');
+            // 找当前区的最近一条快照（撤销不会跨区影响数据）
+            let idx = -1;
+            for (let i = stack.length - 1; i >= 0; i--) {
+                if (stack[i].mode === mode) { idx = i; break; }
+            }
+            if (idx === -1) return showToast('ℹ️ 当前区没有可撤销的操作');
+            const snap = stack[idx];
+            stack.splice(idx, 1);
+            localStorage.setItem('bossData_undo_stack', JSON.stringify(stack));
+
+            bosses = snap.bosses;
+            remindedBosses.clear();
+            stoppedFlashing.clear();
+            remindedOther.clear();
+            // 直接写存储（不走 saveData，避免把恢复前的状态重新记入历史/撤销栈）
+            const dataToSave = {
+                bosses: bosses,
+                _remindedBosses: [], _stoppedFlashing: [], _remindedOther: [],
+                _timezone: timezone
+            };
+            localStorage.setItem(getStorageKey(), JSON.stringify(dataToSave));
+            renderTable();
+            updateUndoState();
+            showToast('↩️ 已撤销：' + snap.label);
+        } catch (e) {
+            showToast('❌ 撤销失败：' + (e.message || e));
+        }
+    }
+
+    function updateUndoState() {
+        try {
+            const stack = JSON.parse(localStorage.getItem('bossData_undo_stack') || '[]');
+            const cnt = stack.filter(s => s.mode === mode).length;
+            const btn = document.getElementById('undoBtn');
+            if (btn) btn.textContent = cnt > 0 ? '↩️ 撤销 (' + cnt + ')' : '↩️ 撤销';
+        } catch (e) { /* ignore */ }
+    }
+
+    function delBoss(id) {
+        const b = bosses.find(x => x.id === id);
+        if (!b) return;
+        if (!confirm('确定删除「' + b.name + '」吗？\n（可点「↩️ 撤销」恢复）')) return;
+        pushUndo('删除 Boss「' + b.name + '」');
+        bosses = bosses.filter(x => x.id !== id);
+        remindedBosses.delete(id);
+        stoppedFlashing.delete(id);
+        saveData();
+        renderTable();
+        showToast('🗑 已删除「' + b.name + '」（可撤销）');
+    }
+
+    function testAlert() {
+        playAlertSound(parseInt(volumeSlider.value));
+        speakBossAlert('测试');
+        showDueGlass('测试', mode);
+    }
+
+    function manualRemind(id) {
+        const b = bosses.find(x => x.id === id);
+        if (!b) return;
+        const key = mode + '|' + id;
+        if (!speakQueue.some(q => q.key === key)) speakQueue.push({ key: key, id: id, name: b.name, mode: mode });
+        if (!isSpeaking) processSpeakQueue();
+    }
+
+    function showToast(msg) {
+        const el = document.getElementById('toast');
+        el.textContent = msg;
+        el.classList.add('show');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+    }
+
+    /* ===== 新区 + 老区 合并查看 ===== */
+    let mergeList = [];
+
+    function openMergeView() {
+        // 读取另一区数据（新区/老区各存于独立 localStorage key）
+        const otherMode = mode === 'new' ? 'old' : 'new';
+        let otherBosses = [];
+        try {
+            const raw = localStorage.getItem('bossData_integrated_' + otherMode);
+            if (raw) {
+                const p = JSON.parse(raw);
+                if (p && Array.isArray(p.bosses)) otherBosses = p.bosses;
+            }
+        } catch (e) { /* ignore */ }
+
+        // 当前区实时数据 + 另一区数据合并，标注区服
+        mergeList = [
+            ...bosses.map(b => ({ ...b, _mode: mode })),
+            ...otherBosses.map(b => ({ ...b, _mode: otherMode }))
+        ];
+        document.getElementById('mergeModalOverlay').style.display = 'flex';
+        renderMergeTable();
+    }
+
+    function renderMergeTable() {
+        const now = new Date();
+        // 未刷新 Boss 中最早到点的那个：名字变蓝（合并查看同样只高亮一个）
+        let soonKeyM = null, soonTM = Infinity;
+        for (const mb of mergeList) {
+            if (!mb.time) continue;
+            const t = new Date(mb.time).getTime();
+            if (isNaN(t) || t <= now.getTime()) continue;
+            if (t < soonTM) { soonTM = t; soonKeyM = mb._mode + '|' + mb.id; }
+        }
+        const sorted = [...mergeList].sort((a, b) => {
+            const ta = new Date(a.time), tb = new Date(b.time);
+            const va = isNaN(ta) ? Infinity : ta.getTime();
+            const vb = isNaN(tb) ? Infinity : tb.getTime();
+            // 分组排序：未刷新(0) → 已过(1) → 未设置(2)，组内按时间升序；已过的 Boss 沉底
+            const pa = isNaN(ta) ? 2 : (ta.getTime() <= now.getTime() ? 1 : 0);
+            const pb = isNaN(tb) ? 2 : (tb.getTime() <= now.getTime() ? 1 : 0);
+            if (pa !== pb) return pa - pb;
+            return va - vb;
+        });
+
+        let html = '';
+        for (const b of sorted) {
+            const rawTarget = new Date(b.time);
+            const isInvalid = isNaN(rawTarget);
+            const diffMs = rawTarget - now;
+            const isPast = diffMs < 0;
+            let statusText, statusClass, countdownStr;
+
+            if (isInvalid) {
+                countdownStr = '--';
+                statusText = '未设置';
+                statusClass = 'badge-muted';
+            } else if (isPast) {
+                // 刷新窗口期：到点后 60 秒内实际可能随时刷新（分钟精度公告）
+                if (diffMs > -60000) {
+                    countdownStr = '🔥 ≤1分钟';
+                    statusText = '刷新窗口';
+                    statusClass = 'badge-danger';
+                } else {
+                    countdownStr = '⏰ 已过';
+                    statusText = '已刷新';
+                    statusClass = 'badge-muted';
+                }
+            } else {
+                const h = Math.floor(diffMs / 3600000);
+                const m = Math.floor((diffMs % 3600000) / 60000);
+                const s = Math.floor((diffMs % 60000) / 1000);
+                countdownStr = `${h}h ${String(m).padStart(2, '0')}m ${String(s).padStart(2, '0')}s`;
+                if (diffMs < 300000) { statusText = '即将刷新'; statusClass = 'badge-danger'; }
+                else if (diffMs < 1800000) { statusText = '30分钟内'; statusClass = 'badge-warning'; }
+                else { statusText = '等待中'; statusClass = 'badge'; }
+            }
+
+            const prob = getDefaultProb(b.name);
+            const probText = prob + '%';
+            const modeCls = b._mode === 'new' ? 'new' : 'old';
+            const cdStyle = isInvalid || isPast ? 'style="color:#8b93a3;"' : '';
+            // 100% 必刷 Boss 标识：柔和的红色渐变 + 红字 + 「必刷」徽章
+            const isFull = prob === 100;
+            const pastStyleM = (isPast && !isInvalid && diffMs < -60000) ? 'opacity:.55;' : '';
+            const rowStyle = isFull
+                ? `style="background:linear-gradient(90deg, rgba(232,105,105,.20), rgba(232,105,105,.10) 70%, rgba(232,105,105,.05)); border-left:3px solid #d98282; ${pastStyleM}"`
+                : (pastStyleM ? `style="${pastStyleM}"` : '');
+            const probStyle = isFull ? 'style="color:#e58b8b;font-weight:bold;"' : '';
+            const fullBadge = isFull ? '<span class="badge badge-danger" style="margin-left:4px;">必刷</span>' : '';
+            // 合并查看同样：未刷新中最早到点的那个名字变蓝；到点后 5 分钟内毛玻璃放大
+            const soonM = (b._mode + '|' + b.id) === soonKeyM;
+            const glassNameM = (isPast && !isInvalid && diffMs > -60000) ? `<span class="boss-window">${b.name}</span>` : b.name;
+            html += `
+                <tr ${rowStyle} data-merge-ts="${b.time || ''}">
+                    <td style="color:#8b93a3;">${getZone(b.name, b.zone)}</td>
+                    <td style="font-weight:650;" data-mkey="${b._mode}|${b.id}" class="${soonM ? 'boss-soon' : ''}">${glassNameM}</td>
+                    <td><span class="mode-badge ${modeCls}">${b._mode === 'new' ? '🆕 新区' : '🕰️ 老区'}</span></td>
+                    <td>${formatTimeByZone(b.time)}</td>
+                    <td class="countdown" ${cdStyle}>${countdownStr}</td>
+                    <td><span class="badge ${statusClass}">${statusText}</span> <span ${probStyle}>${probText}</span>${fullBadge}</td>
+                </tr>`;
+        }
+        document.getElementById('mergeTbody').innerHTML = html || '<tr><td colspan="6" class="empty-state">暂无数据</td></tr>';
+    }
+
+    function updateMergeCountdown() {
+        const now = new Date();
+        // 未刷新 Boss 中最早到点的那个：名字变蓝（每秒重算）
+        let soonKeyM = null, soonTM = Infinity;
+        for (const mb of mergeList) {
+            if (!mb.time) continue;
+            const t = new Date(mb.time).getTime();
+            if (isNaN(t) || t <= now.getTime()) continue;
+            if (t < soonTM) { soonTM = t; soonKeyM = mb._mode + '|' + mb.id; }
+        }
+        const rows = document.querySelectorAll('#mergeTbody tr');
+        rows.forEach(row => {
+            const ts = row.getAttribute('data-merge-ts');
+            if (!ts) return;
+            const t = new Date(ts);
+            if (isNaN(t)) return;
+            const diffMs = t - now;
+            // 已过 5 分钟的 Boss 行整体淡化（名字变暗区分，每秒同步）
+            if (diffMs < -60000) row.style.opacity = '0.5';
+            else row.style.opacity = '';
+            // 最早到点的未刷新 Boss：名字变蓝
+            const nameWrap = row.querySelector('td:first-child');
+            if (nameWrap) {
+                const rowKey = nameWrap.getAttribute('data-mkey');
+                if (rowKey === soonKeyM) nameWrap.classList.add('boss-soon');
+                else nameWrap.classList.remove('boss-soon');
+                // 毛玻璃窗口同步：到点后 5 分钟内 Boss 名毛玻璃放大，超时恢复普通
+                const inWinM = diffMs < 0 && diffMs > -60000;
+                const spanM = nameWrap.querySelector('.boss-window');
+                if (inWinM && !spanM) {
+                    const sp = document.createElement('span');
+                    sp.className = 'boss-window';
+                    sp.textContent = nameWrap.textContent;
+                    nameWrap.textContent = '';
+                    nameWrap.appendChild(sp);
+                } else if (!inWinM && spanM) {
+                    nameWrap.textContent = spanM.textContent;
+                }
+            }
+            const cd = row.querySelector('.countdown');
+            if (!cd) return;
+            if (diffMs < 0) {
+                if (diffMs > -60000) { cd.textContent = '🔥 ≤1分钟'; cd.style.color = '#e08f8f'; }
+                else { cd.textContent = '⏰ 已过'; cd.style.color = '#8b93a3'; }
+            } else {
+                const h = Math.floor(diffMs / 3600000);
+                const m = Math.floor((diffMs % 3600000) / 60000);
+                const s = Math.floor((diffMs % 60000) / 1000);
+                cd.textContent = `${h}h ${String(m).padStart(2, '0')}m ${String(s).padStart(2, '0')}s`;
+                cd.style.color = diffMs < 300000 ? '#e08f8f' : '';
+            }
+        });
+    }
+
+    function closeMergeModal() {
+        document.getElementById('mergeModalOverlay').style.display = 'none';
+        mergeList = [];
+    }
+
+    // ===== 界面设置自动记忆（音量 / 提醒提前量 / 系统弹窗开关 / 悬浮球位置） =====
+    const SETTINGS_KEY = 'bossData_settings_v1';
+    let settings = { volume: 70, remindMs: 1000, syncX: null, syncY: null, pasteX: null, pasteY: null };
+
+    function loadSettings() {
+        try {
+            const raw = localStorage.getItem(SETTINGS_KEY);
+            if (raw) Object.assign(settings, JSON.parse(raw));
+        } catch (e) { /* ignore */ }
+    }
+    function saveSettings() {
+        try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* ignore */ }
+    }
+
+    // ===== 粘贴解析悬浮球：圆形图标可拖动 + 点击展开 / 收起 =====
+    let pasteDragging = false, pasteMoved = false, pasteOffX = 0, pasteOffY = 0;
+    function initPasteFabDrag() {
+        const pf = document.getElementById('pasteFloat');
+        const fab = document.getElementById('pasteFab');
+        if (!pf || !fab) return;
+        // 位置记忆恢复
+        if (settings.pasteX != null && settings.pasteY != null) {
+            pf.style.left = settings.pasteX + 'px';
+            pf.style.top = settings.pasteY + 'px';
+            pf.style.right = 'auto';
+            pf.style.bottom = 'auto';
+        }
+        // 拖动
+        fab.addEventListener('mousedown', function(e) {
+            pasteDragging = true; pasteMoved = false;
+            const r = pf.getBoundingClientRect();
+            pasteOffX = e.clientX - r.left;
+            pasteOffY = e.clientY - r.top;
+            e.preventDefault();
+        });
+        document.addEventListener('mousemove', function(e) {
+            if (!pasteDragging) return;
+            if (Math.abs(e.movementX) > 1 || Math.abs(e.movementY) > 1) pasteMoved = true;
+            let x = e.clientX - pasteOffX, y = e.clientY - pasteOffY;
+            x = Math.max(0, Math.min(window.innerWidth - 60, x));
+            y = Math.max(0, Math.min(window.innerHeight - 60, y));
+            pf.style.left = x + 'px';
+            pf.style.top = y + 'px';
+            pf.style.right = 'auto';
+            pf.style.bottom = 'auto';
+            settings.pasteX = x; settings.pasteY = y;
+        });
+        document.addEventListener('mouseup', function() {
+            if (pasteDragging) { pasteDragging = false; saveSettings(); }
+        });
+    }
+    function togglePasteFloat(ev) {
+        if (ev) ev.stopPropagation();
+        if (pasteMoved) { pasteMoved = false; return; } // 拖动结束不算点击
+        document.getElementById('pasteFloat').classList.toggle('open');
+    }
+
+    // ===== 同步云端悬浮球：可拖动 + 位置记忆 + 点击即同步 =====
+    let syncDragging = false, syncMoved = false, syncOffX = 0, syncOffY = 0;
+    function initSyncFab() {
+        const fabWrap = document.getElementById('syncFabWrap');
+        if (!fabWrap) return;
+        // 位置记忆恢复
+        if (settings.syncX != null && settings.syncY != null) {
+            fabWrap.style.left = settings.syncX + 'px';
+            fabWrap.style.top = settings.syncY + 'px';
+            fabWrap.style.right = 'auto';
+            fabWrap.style.bottom = 'auto';
+        }
+        const fab = document.getElementById('syncFab');
+        fab.addEventListener('mousedown', function(e) {
+            syncDragging = true; syncMoved = false;
+            const r = fabWrap.getBoundingClientRect();
+            syncOffX = e.clientX - r.left;
+            syncOffY = e.clientY - r.top;
+            e.preventDefault();
+        });
+        document.addEventListener('mousemove', function(e) {
+            if (!syncDragging) return;
+            if (Math.abs(e.movementX) > 1 || Math.abs(e.movementY) > 1) syncMoved = true;
+            let x = e.clientX - syncOffX, y = e.clientY - syncOffY;
+            x = Math.max(0, Math.min(window.innerWidth - 44, x));
+            y = Math.max(0, Math.min(window.innerHeight - 40, y));
+            fabWrap.style.left = x + 'px';
+            fabWrap.style.top = y + 'px';
+            fabWrap.style.right = 'auto';
+            fabWrap.style.bottom = 'auto';
+            settings.syncX = x; settings.syncY = y;
+        });
+        document.addEventListener('mouseup', function() {
+            if (syncDragging) { syncDragging = false; saveSettings(); }
+        });
+    }
+
+    // 点击即同步；拖动结束不算点击，避免误触
+    function syncFabClick(ev) {
+        if (ev) ev.stopPropagation();
+        if (syncMoved) { syncMoved = false; return; }
+        syncToCloud();
+    }
+
+    // ===== 「⋯ 更多」下拉菜单 =====
+    function toggleMoreMenu() {
+        document.getElementById('moreMenu').classList.toggle('show');
+    }
+
+    // ===== 行内 ⋯ 菜单 =====
+    function toggleRowMenu(id, ev) {
+        if (ev) ev.stopPropagation();
+        document.querySelectorAll('.row-menu.show').forEach(m => {
+            if (m.id !== 'rowMenu_' + id) m.classList.remove('show');
+        });
+        document.getElementById('rowMenu_' + id).classList.toggle('show');
+    }
+
+    // 点击其他区域关闭所有下拉菜单 + 收起解析弹框
+    document.addEventListener('click', function(e) {
+        if (!e.target.closest('.more-wrap')) document.getElementById('moreMenu').classList.remove('show');
+        if (!e.target.closest('.row-more')) document.querySelectorAll('.row-menu.show').forEach(m => m.classList.remove('show'));
+        if (!e.target.closest('.paste-float')) document.getElementById('pasteFloat').classList.remove('open');
+    });
+
+    function init() {
+        loadCatalog();
+        mode = 'new';
+        timezone = 'japan';
+
+        if (!loadData()) {
+            bosses = DEFAULT_BOSSES.map(b => ({ ...b, id: 'b' + Date.now() + Math.random() }));
+            saveData();
+        }
+
+        // 恢复界面设置
+        loadSettings();
+        volumeSlider.value = settings.volume;
+        volumeDisplay.textContent = settings.volume + '%';
+        remindMinutesSelect.value = String(settings.remindMs);
+        initSyncFab();
+        initPasteFabDrag();
+
+        renderTable();
+        setInterval(updateClock, 1000);
+
+        // 区服负责人机制：认领当前区 + 心跳保活 + 页面关闭释放
+        claimZone(mode);
+        setInterval(heartbeatZones, 10000);
+        window.addEventListener('beforeunload', releaseZones);
+
+        inputKillTime.addEventListener('change', function() {
+            const name = inputName.value.trim();
+            const defaultBoss = DEFAULT_BOSSES.find(b => b.name === name);
+            if (!defaultBoss || !this.value) return;
+            const killDate = new Date(this.value);
+            const nextDate = new Date(killDate.getTime() + defaultBoss.interval * 60 * 60 * 1000);
+            inputTime.value = isoToLocalInputValue(nextDate.toISOString());
+        });
+
+        volumeSlider.addEventListener('input', function() {
+            volumeDisplay.textContent = this.value + '%';
+            settings.volume = parseInt(this.value) || 70;
+            saveSettings();
+        });
+
+        remindMinutesSelect.addEventListener('change', function() {
+            settings.remindMs = parseInt(this.value) || 1000;
+            saveSettings();
+        });
+
+        showToast(`✅ 系统就绪 | 🇯🇵 日本时间模式`);
+    }
+
+    window.openCloudSettings = openCloudSettings; window.closeCloudSettings = closeCloudSettings;
+    window.saveCloudSettings = saveCloudSettings; window.clearCloudSettings = clearCloudSettings;
+    window.switchMode = switchMode; window.setTimezone = setTimezone;
+    window.openAddModal = openAddModal; window.editBoss = editBoss;
+    window.saveBoss = saveBoss; window.closeModal = closeModal;
+    window.resetDefaultData = resetDefaultData; window.recordKill = recordKill;
+    window.delayBoss = delayBoss; window.delayAllPastUnupdated = delayAllPastUnupdated;
+    window.clearAllReminded = clearAllReminded; window.parseAndUpdate = parseAndUpdate;
+    window.confirmBatchUpdate = confirmBatchUpdate; window.closeBatchModal = closeBatchModal;
+    window.toggleReminder = toggleReminder; window.manualRemind = manualRemind;
+    window.testAlert = testAlert; window.stopFlashing = stopFlashing;
+    window.importData = importData;
+    window.syncToCloud = syncToCloud; window.loadFromCloud = loadFromCloud;
+    window.toggleUploadMode = toggleUploadMode;
+    window.openMergeView = openMergeView; window.closeMergeModal = closeMergeModal;
+    window.undoLast = undoLast; window.delBoss = delBoss;
+    window.toggleMoreMenu = toggleMoreMenu; window.toggleRowMenu = toggleRowMenu;
+    window.togglePasteFloat = togglePasteFloat; window.syncFabClick = syncFabClick;
+
+    // 多标签页防重：监听其他标签页的播报广播，收到后同步「已播报」标记，避免同一 Boss 被播报两遍
+    window.addEventListener('storage', function(e) {
+        if (e.key === 'bossData_speak_broadcast' && e.newValue) {
+            try {
+                const data = JSON.parse(e.newValue);
+                if (data && data.key) {
+                    const sep = data.key.indexOf('|');
+                    if (sep > 0) {
+                        const m = data.key.slice(0, sep);
+                        if (m === mode) remindedBosses.add(data.key.slice(sep + 1));
+                        else remindedOther.add(data.key);
+                        saveData();
+                        renderTable();
+                    }
+                }
+            } catch (err) { /* ignore */ }
+        }
+    });
+
+    updateUndoState();
+    init();
+    updateCloudConnectionLabel();
+</script>
+</body>
+</html>
