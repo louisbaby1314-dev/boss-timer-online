@@ -36,6 +36,38 @@ button#mergeBtn.active{background:#6546a3;border-color:#9c7be2}
 #list tr.boss-past { opacity: .5; }
 #list tr.boss-past .name { color: #9299a8; }
 #list tr.boss-past .count { color: #9299a8 !important; }
+
+/* 方案 A：低饱和深蓝 × 深咖棕。仅视觉配色，不调整 Boss 状态或提醒逻辑。 */
+body.mode-new {
+  background:radial-gradient(860px 400px at 78% -16%,rgba(48,72,102,.18),transparent 70%),linear-gradient(180deg,#101b29 0%,#111b28 54%,#10151e 100%);
+  --line:#303e4d;
+}
+body.mode-old {
+  background:radial-gradient(860px 400px at 78% -16%,rgba(94,72,56,.16),transparent 70%),linear-gradient(180deg,#211c1b 0%,#1c1a1a 56%,#141618 100%);
+  --line:#453832;
+}
+body.mode-merge {
+  background:radial-gradient(800px 420px at 12% -15%,rgba(48,72,102,.12),transparent 72%),radial-gradient(800px 420px at 92% -15%,rgba(94,72,56,.10),transparent 72%),#15191f;
+  --line:#383b43;
+}
+body.mode-new .remindBar,body.mode-new .panel { background:#192b40;border-color:#304458; }
+body.mode-old .remindBar,body.mode-old .panel { background:#352923;border-color:#514037; }
+body.mode-merge .remindBar,body.mode-merge .panel { background:#22262f;border-color:#3a404d; }
+body.mode-new th { background:#283d55;color:#bac8d9; }
+body.mode-old th { background:#4a382f;color:#d4c5b7; }
+body.mode-merge th { background:#303645;color:#c5ccda; }
+body.mode-new button,body.mode-new .remindTools select { background:#243548;border-color:#425469;color:#e1e7ef; }
+body.mode-old button,body.mode-old .remindTools select { background:#40332c;border-color:#604e42;color:#e9e3df; }
+body.mode-merge button,body.mode-merge .remindTools select { background:#303646;border-color:#515a6a;color:#e1e7ef; }
+body.mode-new button#newBtn.active { background:#344f71;border-color:#58769a; }
+body.mode-old button#oldBtn.active { background:#68503d;border-color:#8a6c52; }
+body.mode-merge button#mergeBtn.active { background:#49465e;border-color:#696583; }
+body.mode-new tbody tr:not(.required):hover { background:rgba(80,111,148,.07); }
+body.mode-old tbody tr:not(.required):hover { background:rgba(135,100,75,.07); }
+body.mode-merge tbody tr:not(.required):hover { background:rgba(115,123,142,.07); }
+body.mode-merge tr.merge-new { background:rgba(58,88,120,.085); }
+body.mode-merge tr.merge-old { background:rgba(109,78,58,.085); }
+/* 保留原有：已过期整行灰显、下一个 Boss 蓝字、必刷红字与浅白倒计时。 */
 </style></head><body class="mode-new"><div class="wrap">
 <header><div><h1>⚔️ Boss 刷新</h1><div class="status" id="status">正在连接云端…</div></div><div class="tools"><button id="newBtn" class="active" onclick="selectMode('new')">🆕 新区</button><button id="oldBtn" class="old" onclick="selectMode('old')">🕰️ 老区</button><button id="mergeBtn" onclick="selectMode('merge')">📊 合并查看</button><button onclick="loadBoth()">↻ 刷新</button></div></header>
 <div class="remindBar"><div class="remindTools"><span class="bar" id="clock">🇨🇳 北京 --:--:--</span><label>🔔 提前</label><select id="advance"><option value="1000">1 秒（到点提醒）</option><option value="60000">1 分钟</option><option value="120000">2 分钟</option><option value="180000">3 分钟</option><option value="300000">5 分钟</option></select><label>🔊 音量</label><input type="range" min="0" max="100" value="70" id="volume"><span id="volumeText" class="minor">70%</span></div><div class="remindTools"><span class="minor" id="remindState">提醒已开启 · 请测试声音</span><button id="toggleBtn" onclick="toggleAlerts()">⏸ 暂停</button><button onclick="testAlert()">🔔 测试声音</button></div></div>
