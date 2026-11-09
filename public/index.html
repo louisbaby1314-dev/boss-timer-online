@@ -1739,89 +1739,94 @@ tbody tr:last-child td { border-bottom: none; }
     // 支持：名称行与时间行分离 / 击退+出没同行或拆行 / 时间带空格(22时 28分) / 仅击退时间(自动按间隔算下次)
     // ===== 文本解析（公共：手动粘贴解析 与 屏幕识别 共用）=====
     function parseWechatOcrText(text, silent) {
-        const lines = String(text || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
-        const dateRe = /(20\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日\s*(\d{1,2})\s*时\s*(\d{1,2})\s*分/g;
-        const names = [], times = [];
-        let other = 0, participants = 0, dateLines = 0;
-        for (const line of lines) {
-            if (/^参与\s*[（(]\s*\d+\s*[）)]$/.test(line)) { participants++; continue; }
-            // 允许已知 Boss 名中被 OCR 插入空格；不做模糊猜测。
-            const stripped = line.replace(/\s/g, '');
-            if (DEFAULT_BOSSES.some(x => x.name === stripped)) { names.push(stripped); continue; }
-            const matches = [...line.matchAll(dateRe)];
-            if (matches.length) {
-                dateLines++;
-                const residue = line.replace(dateRe, '').replace(/[\s，,、；;]/g,'');
-                if (residue) { other++; continue; }
-                for (const m of matches) {
-                    const year=Number(m[1]),month=Number(m[2]),day=Number(m[3]),hour=Number(m[4]),minute=Number(m[5]);
-                    const utc = Date.UTC(year,month-1,day,hour,minute);
-                    const d = new Date(utc);
-                    if (d.getUTCFullYear()!==year || d.getUTCMonth()!==month-1 || d.getUTCDate()!==day || d.getUTCHours()!==hour || d.getUTCMinutes()!==minute) return {error:'发现无效日期或时间，请检查微信识别文字'};
-                    times.push(utc-(timezone==='japan'?9:8)*3600000);
-                }
-            } else other++;
+        const lines=String(text||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+        const datePattern=/(20\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日\s*(\d{1,2})\s*时\s*(\d{1,2})\s*分/g;
+        const known=new Map(DEFAULT_BOSSES.map(b=>{
+            const current=bosses.find(x=>x.name===b.name);
+            const interval=Number(current?.interval)>0?Number(current.interval):Number(b.interval);
+            return [b.name.replace(/\s/g,''),{...b,interval}];
+        }));
+        const tokens=[];
+        function ms(m){
+            const [y,mo,d,h,mi]=m.slice(1,6).map(Number);
+            const utc=Date.UTC(y,mo-1,d,h,mi),test=new Date(utc);
+            if(test.getUTCFullYear()!==y||test.getUTCMonth()!==mo-1||test.getUTCDate()!==d||test.getUTCHours()!==h||test.getUTCMinutes()!==mi)return NaN;
+            return utc-(timezone==='japan'?9:8)*3600000;
         }
-        // 没有完整的分列结构时交由旧解析器；像此类分列结构解析失败时宁可拒绝更新。
-        const columnar = participants>0 || (names.length>1 && dateLines>0 && lines.findIndex(l=>l.replace(/\s/g,'')===names[0])<lines.findIndex(l=>/(20\d{2})\s*年/.test(l)));
-        dateRe.lastIndex=0;
-        if (!columnar) return null;
-        if (!names.length || !times.length || other) return {error:`文本中有 ${other} 行无法识别，或缺少完整名称/日期；请先核对微信提取文字`};
-        if (participants && participants!==names.length) return {error:`Boss ${names.length} 个，但参与人数 ${participants} 项，请核对是否有遗漏行`};
-        if (times.length < names.length || times.length > names.length*2) return {error:`Boss ${names.length} 个，日期 ${times.length} 个，无法可靠对应`};
-        // 从前到后动态规划。每个 Boss 必须消耗一个击退时间，第二个时间仅在刷新间隔严格吻合时视作出没时间。
-        const memo = new Map();
-        function resolve(i,j) {
-            const key=i+','+j;
-            if (memo.has(key)) return memo.get(key);
-            if (i===names.length) return j===times.length ? {score:0,rows:[],ways:1} : null;
-            if (j>=times.length) return null;
-            const def=DEFAULT_BOSSES.find(b=>b.name===names[i]);
-            const remain=names.length-i-1;
-            let best=null;
-            for (const span of [1,2]) {
-                if (span===2) {
-                    if(j+1>=times.length) continue;
-                    const hours=(times[j+1]-times[j])/3600000;
-                    if (Math.abs(hours-def.interval)>0.035) continue; // 允许最多约两分钟偏差
-                }
-                if (times.length-(j+span)<remain || times.length-(j+span)>remain*2) continue;
-                // 截图列表一般按照击退时间从新到旧排列。违反时保持可用，但提示复核。
-                const following=resolve(i+1,j+span);
-                if(!following) continue;
-                const current={name:names[i],kill:times[j],spawn:span===2?times[j+1]:null};
-                let score=following.score+(span===2?10:0);
-                if(following.rows.length && current.kill<following.rows[0].kill) score-=15;
-                if(!best || score>best.score) best={score,rows:[current,...following.rows],ways:following.ways};
-                else if(score===best.score) best.ways=Math.min(999,best.ways+following.ways);
+        for(let i=0;i<lines.length;i++){
+            const line=lines[i],compact=line.replace(/\s/g,'');
+            if(/^参与\s*[（(]?\s*\d+\s*[）)]?$/.test(line))continue;
+            // 游戏截图可能使用完整变体名，而本地 Boss 表使用简称。
+            // 别名识别始终进入人工核对，不静默覆盖记录。
+            const aliases={'入侵的猛龙兽':'猛龙兽'};
+            const aliasName=aliases[compact];
+            const cfg=known.get(compact)|| (aliasName ? known.get(aliasName) : null);
+            if(cfg){tokens.push({type:'name',name:cfg.name,line:i+1,ocrName:line,alias:!!aliasName});continue;}
+            const matches=[...line.matchAll(datePattern)];
+            if(matches.length){
+                const remainder=line.replace(datePattern,'').replace(/[，,、；;\s]/g,'');
+                if(remainder)continue;
+                for(const m of matches)tokens.push({type:'time',time:ms(m),line:i+1});
+                continue;
             }
-            memo.set(key,best); return best;
+            // 单个 OCR 杂字或数字不参与配对。
         }
-        const solution=resolve(0,0);
-        if(!solution) return {error:'日期无法按 Boss 顺序和预设刷新间隔匹配，已阻止可能的错位更新'};
-        const ambiguous = solution.ways > 1;
-        let results=solution.rows.map((r,i)=>{
-            const cfg=DEFAULT_BOSSES.find(x=>x.name===r.name);
-            const existing=bosses.find(x=>x.name===r.name);
-            const next=r.spawn??r.kill+cfg.interval*3600000;
-            return {name:r.name,killAt:r.kill,nextTime:new Date(next).toISOString(),interval:cfg.interval,prob:cfg.prob,
-                hasSpawn:r.spawn!=null,isNew:!existing,knownInterval:cfg.interval,presetInterval:cfg.interval,
-                mismatch:false,olderThanLocal:!!(existing?.time && new Date(existing.time).getTime()>next),fromWechat:true,ocrRow:i+1,
-                ambiguous:ambiguous, warnings:ambiguous?['多个时间归组方案同样合理，需人工确认']:[]};
-        });
-        // 同名旧截图记录只保留最新击退事件。
-        const distinct=new Map();
-        for(const r of results) {
-            const prev=distinct.get(r.name);
-            if (prev) {
-                r.duplicate=true; prev.duplicate=true;
-                r.warnings.push('截图中出现同名 Boss 多条记录，已只保留最新击退时间');
+        if(!tokens.some(t=>t.type==='name')||!tokens.some(t=>t.type==='time'))return null;
+        if(tokens.some(t=>t.type==='time'&&!Number.isFinite(t.time)))return {error:'日期或时间不正确，请检查识别结果'};
+        const used=new Set(),rows=[];
+        const names=tokens.map((t,i)=>t.type==='name'?i:-1).filter(i=>i>=0);
+        const pairByName=new Map();
+        // Pass 1: 两个时间精确匹配 Boss 已知间隔，则先占用时间，防止误借给其他 Boss。
+        for(const idx of names){
+            const cfg=known.get(tokens[idx].name.replace(/\s/g,''));
+            const candidates=[];
+            for(const [a,b] of [[idx+1,idx+2],[idx-1,idx+1]]){
+                if(a<0||b>=tokens.length||tokens[a].type!=='time'||tokens[b].type!=='time'||used.has(a)||used.has(b))continue;
+                const diff=(tokens[b].time-tokens[a].time)/3600000;
+                if(diff>0&&Math.abs(diff-Number(cfg.interval))<=0.035)candidates.push({a,b});
             }
-            if(!prev||r.killAt>prev.killAt) distinct.set(r.name,r);
+            if(candidates.length===1){pairByName.set(idx,candidates[0]);used.add(candidates[0].a);used.add(candidates[0].b);}
         }
-        results=[...distinct.values()];
-        // 重复名字无论采用哪条都需要先人工核对（不自动勾选）。
-        for(const r of results) if(r.duplicate) {r.warnings.push('同名多条数据：请确认所需的击退记录');}
+        for(const idx of names){
+            const t=tokens[idx],cfg=known.get(t.name.replace(/\s/g,''));
+            const existing=bosses.find(b=>b.name===t.name);
+            const aliasWarning=t.alias?[`截图名称「${t.ocrName}」按预设「${t.name}」识别，须人工确认`]:[];
+            const base={name:t.name,interval:cfg.interval,prob:cfg.prob,isNew:!existing,knownInterval:cfg.interval,
+                presetInterval:cfg.interval,mismatch:false,fromWechat:true,ocrRow:t.line,duplicate:false};
+            const pair=pairByName.get(idx);
+            if(pair){
+                const kill=tokens[pair.a].time,spawn=tokens[pair.b].time;
+                const oldTime=existing?.time&&new Date(existing.time).getTime();
+                rows.push({...base,killAt:kill,nextTime:new Date(spawn).toISOString(),hasSpawn:true,
+                    inferred:false,ambiguous:false,olderThanLocal:!!(oldTime&&oldTime>spawn),warnings:[...aliasWarning]});
+                continue;
+            }
+            // Pass 2: only one unused time next to the name and no competing candidate.
+            const adjacent=[idx-1,idx+1].filter(i=>i>=0&&i<tokens.length&&tokens[i].type==='time'&&!used.has(i));
+            const eligible=adjacent.length===1 && Number.isFinite(Number(cfg.interval)) && Number(cfg.interval)>0;
+            // An adjacent name-less second time on the SAME side signals an unresolved pair, not a lone time.
+            const j=adjacent[0],other=j===idx+1?idx+2:idx-2;
+            const competitor=eligible && other>=0&&other<tokens.length&&tokens[other].type==='time'&&!used.has(other);
+            if(eligible&&!competitor){
+                used.add(j);
+                const kill=tokens[j].time,spawn=kill+Number(cfg.interval)*3600000;
+                const oldTime=existing?.time&&new Date(existing.time).getTime();
+                rows.push({...base,killAt:kill,nextTime:new Date(spawn).toISOString(),hasSpawn:false,
+                    inferred:true,ambiguous:false,olderThanLocal:!!(oldTime&&oldTime>spawn),
+                    warnings:[...aliasWarning,`仅识别到击退时间；按本地预设间隔 ${cfg.interval} 小时自动推算，请核对`]});
+            }else{
+                rows.push({...base,killAt:null,nextTime:null,hasSpawn:false,inferred:false,ambiguous:true,olderThanLocal:false,
+                    warnings:[...aliasWarning,'击退时间无法唯一确定，或缺少有效的刷新间隔；请核对截图，暂不可导入']});
+            }
+        }
+        const unique=new Map();
+        for(const row of rows){
+            const old=unique.get(row.name);
+            if(old){row.duplicate=true;old.duplicate=true;if(row.killAt!=null&&(old.killAt==null||row.killAt>old.killAt))unique.set(row.name,row);}
+            else unique.set(row.name,row);
+        }
+        const results=[...unique.values()];
+        for(const r of results)if(r.duplicate)r.warnings.push('同名 Boss 出现多次，请核对');
         return {results};
     }
 
@@ -2046,7 +2051,7 @@ tbody tr:last-child td { border-bottom: none; }
     }
 
     function assessImportRow(r) {
-        const issues = [...(r.warnings || [])];
+        const issues = [...(r.warnings || [])].filter(w => !(r.inferred && /^仅识别到击退时间；按本地预设间隔/.test(w)));
         if (r.mismatch) issues.push('游戏显示的刷新间隔与预设不一致');
         if (r.olderThanLocal) issues.push('该时间早于本地当前记录，可能是旧截图');
         if (r.ambiguous && !issues.some(x=>x.includes('归组'))) issues.push('时间对应关系存在歧义');
@@ -2058,17 +2063,21 @@ tbody tr:last-child td { border-bottom: none; }
     }
 
     function renderBatchModal(results) {
+        // 核对弹窗出现时，自动收起悬浮文字输入框，避免遮住 Boss 结果。
         batchCount.textContent = results.length;
         const checked = results.filter(r=>assessImportRow(r).length===0).length;
         let html = `<div style="font-size:12px;color:#9daabe;margin:0 0 8px;">✅ ${checked} 条已自动勾选${results.length>checked?` · <span style="color:#fbbf24">⚠️ ${results.length-checked} 条待确认</span>`:''}</div>`;
         for (let i=0;i<results.length;i++) {
             const r=results[i], issues=assessImportRow(r), safe=issues.length===0;
             const status=r.isNew?'🆕 新增':'📝 更新';
-            const next=r.nextTime?formatTimeByZone(r.nextTime):'时间无效';
-            html+=`<div class="batch-item" style="gap:8px;align-items:flex-start;padding:${safe?'7px 2px':'9px 7px'};${safe?'':'background:rgba(245,158,11,.075);border-left:2px solid #fbbf24;border-radius:6px;'}">
-                <input type="checkbox" ${safe?'checked':''} id="batch_${i}" style="margin-top:3px;flex-shrink:0" />
+            const highlighted=r.inferred || !safe;
+            const next=r.nextTime?formatTimeByZone(r.nextTime):'⚠️ 时间不完整（禁止导入）';
+            const kill=r.killAt!=null?formatTimeByZone(new Date(r.killAt).toISOString()):'未确定';
+            const inferredTag=r.inferred?'<span style="color:#fbbf24;font-size:11px;">🟡 自动补全 · 请核对</span>':'';
+            html+=`<div class="batch-item" style="gap:8px;align-items:flex-start;padding:${highlighted?'9px 7px':'7px 2px'};${highlighted?'background:rgba(245,158,11,.075);border-left:2px solid #fbbf24;border-radius:6px;':''}">
+                <input type="checkbox" ${safe?'checked':''} ${r.nextTime?'':'disabled title="时间不完整，不能导入"'} id="batch_${i}" style="margin-top:3px;flex-shrink:0" />
                 <label for="batch_${i}" style="margin:0;font-weight:500;cursor:pointer;flex:1;min-width:0;line-height:1.45;">
-                    <span style="color:${safe?'#dce5f2':'#fbbf24'}">${htmlEscape(r.name)}</span><span style="color:#9ca3af"> → 下次刷新: ${next} (间隔${r.interval}h)</span> <span class="status">${status}</span>
+                    <span style="color:${highlighted?'#fbbf24':'#dce5f2'}">${htmlEscape(r.name)}</span><span style="color:#9ca3af"> · 击退: ${kill} → 下次刷新: ${next} (间隔${r.interval}h)</span> ${inferredTag} <span class="status">${status}</span>
                     ${issues.length?`<div style="color:#fbbf24;font-size:11px;margin-top:4px;">⚠️ ${issues.join('；')}</div>`:''}
                 </label>
             </div>`;
