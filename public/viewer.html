@@ -15,8 +15,23 @@ body.mode-new tbody tr:not(.required):hover { background:rgba(59,130,246,.09); }
 body.mode-old tbody tr:not(.required):hover { background:rgba(245,158,11,.09); }
 /* 倒计时始终使用统一的明亮文字，不再按剩余时间变黄/红 */
 .count,.count.soon,.count.due,.count.muted { color:#e8eef9; }
+
+/* 双区合并与下一只 Boss 名称提示 */
+body.mode-merge{background:radial-gradient(760px 460px at 15% -10%,rgba(37,99,235,.18),transparent 70%),radial-gradient(760px 460px at 95% -10%,rgba(217,119,6,.16),transparent 70%),#0e1119}
+body.mode-merge .remindBar,body.mode-merge .panel{background:#171e2a}
+button#mergeBtn.active{background:#6546a3;border-color:#9c7be2}
+.merge-new{background:rgba(37,99,235,.075)}
+.merge-old{background:rgba(217,119,6,.075)}
+.merge-new td:first-child{border-left:3px solid #4288e6}
+.merge-old td:first-child{border-left:3px solid #d99032}
+.server-tag{display:inline-block;white-space:nowrap;border-radius:10px;font-size:11px;padding:3px 8px}
+.server-tag.new{color:#a6cafa;background:rgba(37,99,235,.17)}
+.server-tag.old{color:#ffd08b;background:rgba(217,119,6,.17)}
+/* 名称高亮优先于必刷红色，倒计时保持统一浅白色 */
+.name.boss-next,.required .name.boss-next{color:#67aeff!important;text-shadow:0 0 12px rgba(72,155,255,.28);font-weight:800}
+.count,.count.soon,.count.due{color:#e8eef9!important}
 </style></head><body class="mode-new"><div class="wrap">
-<header><div><h1>⚔️ Boss 刷新</h1><div class="status" id="status">正在连接云端…</div></div><div class="tools"><button id="newBtn" class="active" onclick="selectMode('new')">🆕 新区</button><button id="oldBtn" class="old" onclick="selectMode('old')">🕰️ 老区</button><button onclick="loadBoth()">↻ 刷新</button></div></header>
+<header><div><h1>⚔️ Boss 刷新</h1><div class="status" id="status">正在连接云端…</div></div><div class="tools"><button id="newBtn" class="active" onclick="selectMode('new')">🆕 新区</button><button id="oldBtn" class="old" onclick="selectMode('old')">🕰️ 老区</button><button id="mergeBtn" onclick="selectMode('merge')">📊 合并查看</button><button onclick="loadBoth()">↻ 刷新</button></div></header>
 <div class="remindBar"><div class="remindTools"><span class="bar" id="clock">🇨🇳 北京 --:--:--</span><label>🔔 提前</label><select id="advance"><option value="1000">1 秒（到点提醒）</option><option value="60000">1 分钟</option><option value="120000">2 分钟</option><option value="180000">3 分钟</option><option value="300000">5 分钟</option></select><label>🔊 音量</label><input type="range" min="0" max="100" value="70" id="volume"><span id="volumeText" class="minor">70%</span></div><div class="remindTools"><span class="minor" id="remindState">提醒已开启 · 请测试声音</span><button id="toggleBtn" onclick="toggleAlerts()">⏸ 暂停</button><button onclick="testAlert()">🔔 测试声音</button></div></div>
 <div class="summary" id="summary">新区、老区均每 30 秒检查云端；浏览器允许播放声音后才会播报</div><div class="panel"><table><thead><tr><th>地区</th><th>Boss</th><th>下次刷新（北京时间）</th><th>倒计时</th><th>状态 / 几率</th></tr></thead><tbody id="list"></tbody></table></div>
 <footer>好友只读模式 · 保留语音与到点提示 · 无法编辑或上传。请保持网页打开并避免让电脑休眠；浏览器在后台可能延迟提醒。</footer></div><div id="glass" class="glass" role="status"></div>
@@ -27,7 +42,17 @@ const seen=new Map(); const safe=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&
 const timeVal=v=>{if(!v)return NaN;const d=Date.parse(v);return Number.isFinite(d)?d:NaN};
 const fmt=new Intl.DateTimeFormat('zh-CN',{timeZone:ZONE,month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});
 const clockFmt=new Intl.DateTimeFormat('zh-CN',{timeZone:ZONE,hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
-function selectMode(m){mode=m;document.body.classList.toggle('mode-new',m==='new');document.body.classList.toggle('mode-old',m==='old');document.getElementById('newBtn').classList.toggle('active',m==='new');document.getElementById('oldBtn').classList.toggle('active',m==='old');render();}
+function selectMode(m){
+ if(!['new','old','merge'].includes(m))return;
+ mode=m;
+ document.body.classList.toggle('mode-new',m==='new');
+ document.body.classList.toggle('mode-old',m==='old');
+ document.body.classList.toggle('mode-merge',m==='merge');
+ document.getElementById('newBtn').classList.toggle('active',m==='new');
+ document.getElementById('oldBtn').classList.toggle('active',m==='old');
+ document.getElementById('mergeBtn').classList.toggle('active',m==='merge');
+ render();
+}
 function settingsInit(){try{const d=JSON.parse(localStorage.getItem('bossViewerRemindersV2')||'{}');if(d.advance)document.getElementById('advance').value=d.advance;if(Number.isFinite(d.volume))document.getElementById('volume').value=d.volume;if(typeof d.enabled==='boolean')enabled=d.enabled;}catch{} updateSettingView();}
 function saveSettings(){try{localStorage.setItem('bossViewerRemindersV2',JSON.stringify({advance:document.getElementById('advance').value,volume:Number(document.getElementById('volume').value),enabled}))}catch{}}
 function updateSettingView(){document.getElementById('volumeText').textContent=document.getElementById('volume').value+'%';document.getElementById('toggleBtn').textContent=enabled?'⏸ 暂停':'▶ 启用';document.getElementById('remindState').textContent=enabled?'提醒已开启 · 请测试声音':'提醒已暂停';}
@@ -41,6 +66,41 @@ function fire(m,b,testing=false){sound();const title=(m==='new'?'新区 ':'老�
 function testAlert(){unlockAudio();fire(mode,{name:'提醒测试',id:'test'},true);document.getElementById('remindState').textContent='🔊 已触发测试；如无声音请检查浏览器静音/系统音量';}
 function checkAlerts(){if(!enabled)return;const now=Date.now(),lead=Number(document.getElementById('advance').value)||1000;for(const m of ['new','old'])for(const b of records[m]){const t=timeVal(b.time);if(!Number.isFinite(t))continue;const key=m+'|'+(b.id||b.name)+'|'+t;if(seen.has(key))continue;const diff=t-now;if(diff<=lead&&diff>=-60000){seen.set(key,now);fire(m,b)}}if(seen.size>600){for(const [k,v] of seen)if(now-v>86400000)seen.delete(k)}}
 async function loadBoth(){const el=document.getElementById('status');el.textContent='⏳ 正在更新新区和老区…';const results=await Promise.allSettled(['new','old'].map(async m=>{const resp=await fetch('/api/boss?mode='+m,{cache:'no-store'});if(!resp.ok)throw new Error(m+' HTTP '+resp.status);const data=await resp.json();records[m]=Array.isArray(data.bosses)?data.bosses:[];meta[m]={catalog:Array.isArray(data._catalog?.bosses)?data._catalog.bosses:[],updatedAt:data.updatedAt||''};}));let failures=results.map((r,i)=>r.status==='rejected'?(['new','old'][i]+': '+r.reason.message):'').filter(Boolean);lastError=failures.join('; ');el.classList.toggle('error',!!failures.length);el.textContent=failures.length?'⚠️ '+lastError:'✅ 新区、老区云端数据已连接 · 北京时间';render();}
-function render(){const now=Date.now();document.getElementById('clock').textContent='🇨🇳 北京 '+clockFmt.format(now);const items=[...records[mode]].sort((a,b)=>(timeVal(a.time)||Infinity)-(timeVal(b.time)||Infinity));const catalog=meta[mode].catalog||[];document.getElementById('list').innerHTML=items.map(b=>{const t=timeVal(b.time),delta=t-now;const c=catalog.find(x=>x.name===b.name);const prob=Number(c?.prob??b.prob??0);const mandatory=prob===100;let count='未设置',status='待更新',cls='muted';if(Number.isFinite(t)){if(delta>=0){const s=Math.floor(delta/1000);count=Math.floor(s/3600)+'h '+String(Math.floor(s%3600/60)).padStart(2,'0')+'m '+String(s%60).padStart(2,'0')+'s';status=delta<=300000?'5分钟内':delta<=1800000?'30分钟内':'等待中';cls=delta<=300000?'due':delta<=1800000?'soon':'';}else if(delta>-60000){count='🔥 ≤1分钟';status='刷新窗口';cls='due'}else{count='已过';status='已过时间';cls='muted'}}return `<tr class="${mandatory?'required':''}"><td class="muted">${safe(b.zone||c?.zone||'')}</td><td class="name">${safe(b.name)}</td><td>${Number.isFinite(t)?fmt.format(t).replace(/\//g,'-'):'-'}</td><td class="count ${cls}">${count}</td><td><span class="${mandatory?'percent':''}">${safe(status)} · ${safe(prob)}%</span>${mandatory?'<span class="must">必刷</span>':''}</td></tr>`}).join('')||'<tr><td colspan="5">暂无云端 Boss 数据</td></tr>';document.getElementById('summary').textContent=(mode==='new'?'新区':'老区')+' '+items.length+' 条 Boss · 🔴 红色为100%必刷 · 两区每30秒读取云端 · 仅查看';}
+function render(){
+ const now=Date.now();
+ document.getElementById('clock').textContent='🇨🇳 北京 '+clockFmt.format(now);
+ const merged=mode==='merge';
+ const items=(merged
+  ? ['new','old'].flatMap(m=>records[m].map(b=>({...b,_mode:m})))
+  : records[mode].map(b=>({...b,_mode:mode})))
+  .sort((a,b)=>{const ta=timeVal(a.time),tb=timeVal(b.time);return (Number.isFinite(ta)?ta:Infinity)-(Number.isFinite(tb)?tb:Infinity)});
+ const upcoming=items.find(b=>Number.isFinite(timeVal(b.time))&&timeVal(b.time)>=now);
+ const upcomingKey=upcoming ? upcoming._mode+'|'+(upcoming.id||upcoming.name)+'|'+upcoming.time : null;
+ const head=document.querySelector('.panel thead tr');
+ head.innerHTML='<th>地区</th><th>Boss</th>'+(merged?'<th>区服</th>':'')+'<th>下次刷新（北京时间）</th><th>倒计时</th><th>状态 / 几率</th>';
+ document.getElementById('list').innerHTML=items.map(b=>{
+  const t=timeVal(b.time),delta=t-now;
+  const c=(meta[b._mode].catalog||[]).find(x=>x.name===b.name);
+  const prob=Number(c?.prob??b.prob??0);
+  const mandatory=prob===100;
+  const key=b._mode+'|'+(b.id||b.name)+'|'+b.time;
+  const isNext=upcomingKey===key;
+  let count='未设置',status='待更新';
+  if(Number.isFinite(t)){
+   if(delta>=0){const sec=Math.floor(delta/1000);count=Math.floor(sec/3600)+'h '+String(Math.floor(sec%3600/60)).padStart(2,'0')+'m '+String(sec%60).padStart(2,'0')+'s';status=delta<=300000?'5分钟内':delta<=1800000?'30分钟内':'等待中';}
+   else if(delta>-60000){count='🔥 ≤1分钟';status='刷新窗口';}
+   else{count='已过';status='已过时间';}
+  }
+  return `<tr class="${mandatory?'required ':''}${merged?'merge-'+b._mode:''}">
+   <td class="muted">${safe(b.zone||c?.zone||'')}</td>
+   <td class="name ${isNext?'boss-next':''}">${safe(b.name)}</td>
+   ${merged?'<td><span class="server-tag '+b._mode+'">'+(b._mode==='new'?'🆕 新区':'🕰️ 老区')+'</span></td>':''}
+   <td>${Number.isFinite(t)?fmt.format(t).replace(/\//g,'-'):'-'}</td>
+   <td class="count">${count}</td>
+   <td><span class="${mandatory?'percent':''}">${safe(status)} · ${safe(prob)}%</span>${mandatory?'<span class="must">必刷</span>':''}</td>
+   </tr>`;
+ }).join('')||`<tr><td colspan="${merged?6:5}">暂无云端 Boss 数据</td></tr>`;
+ document.getElementById('summary').textContent=(merged?'新区＋老区合并':mode==='new'?'新区':'老区')+' · '+items.length+' 条 Boss · 🔵 蓝色名称为下一个即将刷新 · 🔴 100% 必刷 · 每30秒读取云端 · 只读';
+}
 document.getElementById('volume').addEventListener('input',()=>{updateSettingView();saveSettings()});document.getElementById('advance').addEventListener('change',saveSettings);settingsInit();loadBoth();setInterval(()=>{render();checkAlerts()},1000);setInterval(loadBoth,30000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)loadBoth()});
 </script></body></html>

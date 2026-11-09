@@ -276,6 +276,8 @@ tbody tr:last-child td { border-bottom: none; }
 /* ===== 即将刷新（到点前 5 分钟内）：Boss 名变蓝高亮（主表格与合并查看通用） ===== */
 .boss-soon { color: #6ea8ff; font-weight: 700; }
 .boss-name.boss-soon:hover { color: #6ea8ff; }
+/* 最近一次尚未刷新的 Boss 名称始终高亮（只作用于名称，不影响倒计时） */
+#bossTableBody td.boss-name.boss-soon, #mergeTbody td.boss-soon { color:#69b4ff !important; font-weight:800 !important; text-shadow:0 0 12px rgba(83,161,255,.32); }
 
 /* ===== Boss 到点后 5 分钟内：名字毛玻璃放大提示（替代原闪红） ===== */
 .boss-window {
@@ -596,9 +598,9 @@ tbody tr:last-child td { border-bottom: none; }
     <div class="header">
         <h1>⚔️ Boss 刷新 <small id="modeLabel" style="font-weight:700; color:#60a5fa;">🆕 新区</small></h1>
         <div class="top-actions">
-            <span class="clock-badge" id="clockBadge">🕐 <span id="currentTimeDisplay">--:--:--</span> <span id="tzTagInline">· 🇯🇵 日本</span></span>
-            <button class="btn-tz active" id="tzJapan" onclick="setTimezone('japan')">🇯🇵 日本</button>
-            <button class="btn-tz" id="tzChina" onclick="setTimezone('china')">🇨🇳 中国</button>
+            <span class="clock-badge" id="clockBadge">🕐 <span id="currentTimeDisplay">--:--:--</span> <span id="tzTagInline">· 🇨🇳 北京</span></span>
+            <button class="btn-tz" id="tzJapan" onclick="setTimezone('japan')">🇯🇵 日本</button>
+            <button class="btn-tz active" id="tzChina" onclick="setTimezone('china')">🇨🇳 中国</button>
             <button class="btn-tab-new active" data-mode="new" onclick="switchMode('new')" id="tabNew">🆕 新区</button>
             <button class="btn-tab-old" data-mode="old" onclick="switchMode('old')" id="tabOld">🕰️ 老区</button>
         </div>
@@ -769,6 +771,7 @@ tbody tr:last-child td { border-bottom: none; }
             <button class="btn btn-outline" style="margin-left:auto;" onclick="closeMergeModal()">✕ 关闭</button>
         </h3>
         <div class="merge-legend">
+            <div id="mergeCloudNote" style="color:#9ac2ff; margin-bottom:5px;">打开时自动读取另一区云端数据</div>
             <span class="mode-badge new">🆕 新区</span> 蓝色 &nbsp;·&nbsp; <span class="mode-badge old">🕰️ 老区</span> 橙色 &nbsp;·&nbsp; 按下次刷新时间从近到远排列，倒计时实时更新
         </div>
         <div class="merge-wrap">
@@ -1033,6 +1036,14 @@ tbody tr:last-child td { border-bottom: none; }
     const toggleBtn = document.getElementById('toggleReminderBtn');
     const remindMinutesSelect = document.getElementById('remindMinutes');
 
+    function refreshTimezoneButtons() {
+        document.getElementById('tzJapan').className = 'btn-tz' + (timezone === 'japan' ? ' active' : '');
+        document.getElementById('tzChina').className = 'btn-tz' + (timezone === 'china' ? ' active' : '');
+        tzTagInline.textContent = timezone === 'japan' ? '· 🇯🇵 日本' : '· 🇨🇳 北京';
+        tzTagInline.style.color = timezone === 'japan' ? '#c4b5fd' : '#fbbf24';
+        clockBadge.style.borderColor = timezone === 'japan' ? '#7c6fd0' : '#d97706';
+    }
+
     function setTimezone(tz) {
         if (tz === timezone) return;
         timezone = tz;
@@ -1063,7 +1074,7 @@ tbody tr:last-child td { border-bottom: none; }
         const tzMap = { japan: 'Asia/Tokyo', china: 'Asia/Shanghai' };
         
         const formatter = new Intl.DateTimeFormat('zh-CN', {
-            timeZone: tzMap[timezone] || 'Asia/Tokyo',
+            timeZone: tzMap[timezone] || 'Asia/Shanghai',
             month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false
         });
         
@@ -1205,6 +1216,7 @@ tbody tr:last-child td { border-bottom: none; }
         // 切换到新区后，认领当前页负责的区
         claimZone(newMode);
 
+        refreshTimezoneButtons();
         renderTable();
         showToast(`已切换到 ${newMode === 'new' ? '新区' : '老区'}，共 ${bosses.length} 个Boss`);
     }
@@ -1617,7 +1629,7 @@ tbody tr:last-child td { border-bottom: none; }
     function updateClock() {
         const now = new Date();
         const pad = n => n.toString().padStart(2, '0');
-        timeDisplay.textContent = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+        timeDisplay.textContent = new Intl.DateTimeFormat('zh-CN',{timeZone:timezone === 'japan'?'Asia/Tokyo':'Asia/Shanghai',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(now);
         if (reminderEnabled) checkAndSpeak();
         updateCountdownOnly();
         if (document.getElementById('mergeModalOverlay').style.display === 'flex') updateMergeCountdown();
@@ -2278,25 +2290,44 @@ tbody tr:last-child td { border-bottom: none; }
     /* ===== 新区 + 老区 合并查看 ===== */
     let mergeList = [];
 
-    function openMergeView() {
-        // 读取另一区数据（新区/老区各存于独立 localStorage key）
-        const otherMode = mode === 'new' ? 'old' : 'new';
-        let otherBosses = [];
-        try {
-            const raw = localStorage.getItem('bossData_integrated_' + otherMode);
-            if (raw) {
-                const p = JSON.parse(raw);
-                if (p && Array.isArray(p.bosses)) otherBosses = p.bosses;
-            }
-        } catch (e) { /* ignore */ }
-
-        // 当前区实时数据 + 另一区数据合并，标注区服
+    async function openMergeView() {
+        // 当前区以正在编辑的本地记录为准；另一区优先读取云端。
+        const currentMode = mode;
+        const otherMode = currentMode === 'new' ? 'old' : 'new';
+        const modal = document.getElementById('mergeModalOverlay');
+        modal.style.display = 'flex';
+        const otherLocal = (() => {
+            try {
+                const p = JSON.parse(localStorage.getItem('bossData_integrated_' + otherMode) || 'null');
+                return Array.isArray(p?.bosses) ? p.bosses : [];
+            } catch (_) { return []; }
+        })();
         mergeList = [
-            ...bosses.map(b => ({ ...b, _mode: mode })),
-            ...otherBosses.map(b => ({ ...b, _mode: otherMode }))
+            ...bosses.map(b => ({ ...b, _mode: currentMode })),
+            ...otherLocal.map(b => ({ ...b, _mode: otherMode }))
         ];
-        document.getElementById('mergeModalOverlay').style.display = 'flex';
         renderMergeTable();
+        const note = document.getElementById('mergeCloudNote');
+        note.textContent = '正在读取另一区云端数据…';
+        try {
+            const response = await fetch('/api/boss?mode=' + otherMode, { cache: 'no-store' });
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            const remote = await response.json();
+            if (!Array.isArray(remote.bosses)) throw new Error('云端格式不正确');
+            // 只替换另一区的列表，不覆盖当前区正在编辑的数据，也不写入任何存储。
+            mergeList = [
+                ...mergeList.filter(b => b._mode === currentMode),
+                ...remote.bosses.map(b => ({ ...b, _mode: otherMode }))
+            ];
+            if (modal.style.display === 'flex') {
+                renderMergeTable();
+                note.textContent = '✅ 已读取' + (otherMode === 'new' ? '新区' : '老区') + '云端数据；当前区显示本地最新记录（未上传修改仅自己可见）';
+            }
+        } catch (error) {
+            if (modal.style.display === 'flex') {
+                note.textContent = '⚠️ 另一区云端读取失败，暂时显示本地缓存：' + error.message;
+            }
+        }
     }
 
     function renderMergeTable() {
@@ -2402,7 +2433,7 @@ tbody tr:last-child td { border-bottom: none; }
             if (diffMs < -60000) row.style.opacity = '0.5';
             else row.style.opacity = '';
             // 最早到点的未刷新 Boss：名字变蓝
-            const nameWrap = row.querySelector('td:first-child');
+            const nameWrap = row.querySelector('td[data-mkey]');
             if (nameWrap) {
                 const rowKey = nameWrap.getAttribute('data-mkey');
                 if (rowKey === soonKeyM) nameWrap.classList.add('boss-soon');
@@ -2573,6 +2604,7 @@ tbody tr:last-child td { border-bottom: none; }
         }
 
         // 恢复界面设置
+        refreshTimezoneButtons();
         loadSettings();
         volumeSlider.value = settings.volume;
         volumeDisplay.textContent = settings.volume + '%';
@@ -2608,7 +2640,7 @@ tbody tr:last-child td { border-bottom: none; }
             saveSettings();
         });
 
-        showToast(`✅ 系统就绪 | 🇯🇵 日本时间模式`);
+        showToast(`✅ 系统就绪 | ${timezone === 'china' ? '🇨🇳 北京时间' : '🇯🇵 日本时间'}模式`);
     }
 
     window.openCloudSettings = openCloudSettings; window.closeCloudSettings = closeCloudSettings;
