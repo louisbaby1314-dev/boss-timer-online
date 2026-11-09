@@ -30,6 +30,12 @@ button#mergeBtn.active{background:#6546a3;border-color:#9c7be2}
 /* 名称高亮优先于必刷红色，倒计时保持统一浅白色 */
 .name.boss-next,.required .name.boss-next{color:#67aeff!important;text-shadow:0 0 12px rgba(72,155,255,.28);font-weight:800}
 .count,.count.soon,.count.due{color:#e8eef9!important}
+
+/* 与管理员原版一致：刷新时间已过超过 1 分钟的 Boss 整行淡化。
+   优先级不覆盖区服背景与必刷标识，整行一起降低亮度。 */
+#list tr.boss-past { opacity: .5; }
+#list tr.boss-past .name { color: #9299a8; }
+#list tr.boss-past .count { color: #9299a8 !important; }
 </style></head><body class="mode-new"><div class="wrap">
 <header><div><h1>⚔️ Boss 刷新</h1><div class="status" id="status">正在连接云端…</div></div><div class="tools"><button id="newBtn" class="active" onclick="selectMode('new')">🆕 新区</button><button id="oldBtn" class="old" onclick="selectMode('old')">🕰️ 老区</button><button id="mergeBtn" onclick="selectMode('merge')">📊 合并查看</button><button onclick="loadBoth()">↻ 刷新</button></div></header>
 <div class="remindBar"><div class="remindTools"><span class="bar" id="clock">🇨🇳 北京 --:--:--</span><label>🔔 提前</label><select id="advance"><option value="1000">1 秒（到点提醒）</option><option value="60000">1 分钟</option><option value="120000">2 分钟</option><option value="180000">3 分钟</option><option value="300000">5 分钟</option></select><label>🔊 音量</label><input type="range" min="0" max="100" value="70" id="volume"><span id="volumeText" class="minor">70%</span></div><div class="remindTools"><span class="minor" id="remindState">提醒已开启 · 请测试声音</span><button id="toggleBtn" onclick="toggleAlerts()">⏸ 暂停</button><button onclick="testAlert()">🔔 测试声音</button></div></div>
@@ -85,13 +91,15 @@ function render(){
   const mandatory=prob===100;
   const key=b._mode+'|'+(b.id||b.name)+'|'+b.time;
   const isNext=upcomingKey===key;
+  // 管理员原版规则：过期超过一分钟才将整行灰显。
+  const isPast=Number.isFinite(t)&&delta< -60000;
   let count='未设置',status='待更新';
   if(Number.isFinite(t)){
    if(delta>=0){const sec=Math.floor(delta/1000);count=Math.floor(sec/3600)+'h '+String(Math.floor(sec%3600/60)).padStart(2,'0')+'m '+String(sec%60).padStart(2,'0')+'s';status=delta<=300000?'5分钟内':delta<=1800000?'30分钟内':'等待中';}
    else if(delta>-60000){count='🔥 ≤1分钟';status='刷新窗口';}
    else{count='已过';status='已过时间';}
   }
-  return `<tr class="${mandatory?'required ':''}${merged?'merge-'+b._mode:''}">
+  return `<tr class="${mandatory?'required ':''}${merged?'merge-'+b._mode:''}${isPast?' boss-past':''}">
    <td class="muted">${safe(b.zone||c?.zone||'')}</td>
    <td class="name ${isNext?'boss-next':''}">${safe(b.name)}</td>
    ${merged?'<td><span class="server-tag '+b._mode+'">'+(b._mode==='new'?'🆕 新区':'🕰️ 老区')+'</span></td>':''}
@@ -100,7 +108,7 @@ function render(){
    <td><span class="${mandatory?'percent':''}">${safe(status)} · ${safe(prob)}%</span>${mandatory?'<span class="must">必刷</span>':''}</td>
    </tr>`;
  }).join('')||`<tr><td colspan="${merged?6:5}">暂无云端 Boss 数据</td></tr>`;
- document.getElementById('summary').textContent=(merged?'新区＋老区合并':mode==='new'?'新区':'老区')+' · '+items.length+' 条 Boss · 🔵 蓝色名称为下一个即将刷新 · 🔴 100% 必刷 · 每30秒读取云端 · 只读';
+ document.getElementById('summary').textContent=(merged?'新区＋老区合并':mode==='new'?'新区':'老区')+' · '+items.length+' 条 Boss · 🔵 蓝色名称为下一个即将刷新 · 灰色为已过期 · 🔴 100% 必刷 · 每30秒读取云端 · 只读';
 }
 document.getElementById('volume').addEventListener('input',()=>{updateSettingView();saveSettings()});document.getElementById('advance').addEventListener('change',saveSettings);settingsInit();loadBoth();setInterval(()=>{render();checkAlerts()},1000);setInterval(loadBoth,30000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)loadBoth()});
 </script></body></html>
