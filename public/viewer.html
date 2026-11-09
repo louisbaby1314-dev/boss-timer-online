@@ -37,41 +37,55 @@ button#mergeBtn.active{background:#6546a3;border-color:#9c7be2}
 #list tr.boss-past .name { color: #9299a8; }
 #list tr.boss-past .count { color: #9299a8 !important; }
 
-/* 方案 A：低饱和深蓝 × 深咖棕。仅视觉配色，不调整 Boss 状态或提醒逻辑。 */
-body.mode-new {
-  background:radial-gradient(860px 400px at 78% -16%,rgba(48,72,102,.18),transparent 70%),linear-gradient(180deg,#101b29 0%,#111b28 54%,#10151e 100%);
-  --line:#303e4d;
+
+
+/* 恢复管理员原版的统一深色视觉：新区、老区、合并查看全部一致。
+   仅保留区服按钮和合并列表小标记，用于辨识数据。 */
+:root { --bg:#0e0f13; --line:#2a2f3a; --text:#e6e8ee; --muted:#8b93a3; }
+body,body.mode-new,body.mode-old,body.mode-merge {
+  background:
+    radial-gradient(1100px 520px at 85% -10%, rgba(37,99,235,.18), transparent 60%),
+    radial-gradient(900px 480px at -10% 20%, rgba(245,158,11,.10), transparent 55%),
+    radial-gradient(800px 500px at 50% 115%, rgba(14,165,233,.10), transparent 60%),
+    linear-gradient(180deg, #111318 0%, #0e0f13 100%) !important;
+  background-attachment:fixed !important;
+  color:#e6e8ee;
 }
-body.mode-old {
-  background:radial-gradient(860px 400px at 78% -16%,rgba(94,72,56,.16),transparent 70%),linear-gradient(180deg,#211c1b 0%,#1c1a1a 56%,#141618 100%);
-  --line:#453832;
+.wrap {
+  max-width:1300px;
+  border-radius:22px;
+  padding:16px 20px 20px;
+  background:rgba(22,25,33,.92);
+  backdrop-filter:blur(14px);
+  -webkit-backdrop-filter:blur(14px);
+  border:1px solid rgba(255,255,255,.07);
+  box-shadow:0 8px 28px -8px rgba(0,0,0,.55);
 }
-body.mode-merge {
-  background:radial-gradient(800px 420px at 12% -15%,rgba(48,72,102,.12),transparent 72%),radial-gradient(800px 420px at 92% -15%,rgba(94,72,56,.10),transparent 72%),#15191f;
-  --line:#383b43;
+body.mode-new .remindBar,body.mode-old .remindBar,body.mode-merge .remindBar,
+body.mode-new .panel,body.mode-old .panel,body.mode-merge .panel,
+.remindBar,.panel {background:#1a1d24 !important;border-color:#2a2f3a !important;}
+body.mode-new th,body.mode-old th,body.mode-merge th,th {background:#20242d !important;color:#8b93a3 !important;}
+body.mode-new button,body.mode-old button,body.mode-merge button,button,
+body.mode-new .remindTools select,body.mode-old .remindTools select,body.mode-merge .remindTools select {
+  background:#232833;border-color:#353c49;color:#e6e8ee;
 }
-body.mode-new .remindBar,body.mode-new .panel { background:#192b40;border-color:#304458; }
-body.mode-old .remindBar,body.mode-old .panel { background:#352923;border-color:#514037; }
-body.mode-merge .remindBar,body.mode-merge .panel { background:#22262f;border-color:#3a404d; }
-body.mode-new th { background:#283d55;color:#bac8d9; }
-body.mode-old th { background:#4a382f;color:#d4c5b7; }
-body.mode-merge th { background:#303645;color:#c5ccda; }
-body.mode-new button,body.mode-new .remindTools select { background:#243548;border-color:#425469;color:#e1e7ef; }
-body.mode-old button,body.mode-old .remindTools select { background:#40332c;border-color:#604e42;color:#e9e3df; }
-body.mode-merge button,body.mode-merge .remindTools select { background:#303646;border-color:#515a6a;color:#e1e7ef; }
-body.mode-new button#newBtn.active { background:#344f71;border-color:#58769a; }
-body.mode-old button#oldBtn.active { background:#68503d;border-color:#8a6c52; }
-body.mode-merge button#mergeBtn.active { background:#49465e;border-color:#696583; }
-body.mode-new tbody tr:not(.required):hover { background:rgba(80,111,148,.07); }
-body.mode-old tbody tr:not(.required):hover { background:rgba(135,100,75,.07); }
-body.mode-merge tbody tr:not(.required):hover { background:rgba(115,123,142,.07); }
-body.mode-merge tr.merge-new { background:rgba(58,88,120,.085); }
-body.mode-merge tr.merge-old { background:rgba(109,78,58,.085); }
-/* 保留原有：已过期整行灰显、下一个 Boss 蓝字、必刷红字与浅白倒计时。 */
+body.mode-new button#newBtn.active,body.mode-old button#newBtn.active,body.mode-merge button#newBtn.active {background:#2563eb;border-color:#3b82f6;}
+body.mode-new button#oldBtn.active,body.mode-old button#oldBtn.active,body.mode-merge button#oldBtn.active {background:#a56707;border-color:#d97706;}
+body.mode-new button#mergeBtn.active,body.mode-old button#mergeBtn.active,body.mode-merge button#mergeBtn.active {background:#6546a3;border-color:#9c7be2;}
+body.mode-new tbody tr:not(.required):hover,body.mode-old tbody tr:not(.required):hover,body.mode-merge tbody tr:not(.required):hover {background:#20242d;}
+/* 合并时两区仅用细边框和区服标签区别，不整行染色。 */
+body.mode-merge tr.merge-new,body.mode-merge tr.merge-old {background:transparent;}
+/* 状态规则保持：下一只蓝色名称、必刷红色、过期整行灰色。 */
+#list tr.boss-past {opacity:.5;}
+#list tr.boss-past .name {color:#9299a8;}
+#list tr.boss-past .count {color:#9299a8 !important;}
+.count,.count.soon,.count.due,.count.muted {color:#e8eef9 !important;}
+#list tr.boss-past .count {color:#9299a8 !important;}
+@media(max-width:650px){.wrap{padding:12px 10px;}}
 </style></head><body class="mode-new"><div class="wrap">
 <header><div><h1>⚔️ Boss 刷新</h1><div class="status" id="status">正在连接云端…</div></div><div class="tools"><button id="newBtn" class="active" onclick="selectMode('new')">🆕 新区</button><button id="oldBtn" class="old" onclick="selectMode('old')">🕰️ 老区</button><button id="mergeBtn" onclick="selectMode('merge')">📊 合并查看</button><button onclick="loadBoth()">↻ 刷新</button></div></header>
 <div class="remindBar"><div class="remindTools"><span class="bar" id="clock">🇨🇳 北京 --:--:--</span><label>🔔 提前</label><select id="advance"><option value="1000">1 秒（到点提醒）</option><option value="60000">1 分钟</option><option value="120000">2 分钟</option><option value="180000">3 分钟</option><option value="300000">5 分钟</option></select><label>🔊 音量</label><input type="range" min="0" max="100" value="70" id="volume"><span id="volumeText" class="minor">70%</span></div><div class="remindTools"><span class="minor" id="remindState">提醒已开启 · 请测试声音</span><button id="toggleBtn" onclick="toggleAlerts()">⏸ 暂停</button><button onclick="testAlert()">🔔 测试声音</button></div></div>
-<div class="summary" id="summary">新区、老区均每 30 秒检查云端；浏览器允许播放声音后才会播报</div><div class="panel"><table><thead><tr><th>地区</th><th>Boss</th><th>下次刷新（北京时间）</th><th>倒计时</th><th>状态 / 几率</th></tr></thead><tbody id="list"></tbody></table></div>
+<div class="summary" id="summary">新区、老区均每 10 秒检查云端；浏览器允许播放声音后才会播报</div><div class="panel"><table><thead><tr><th>地区</th><th>Boss</th><th>下次刷新（北京时间）</th><th>倒计时</th><th>状态 / 几率</th></tr></thead><tbody id="list"></tbody></table></div>
 <footer>好友只读模式 · 保留语音与到点提示 · 无法编辑或上传。请保持网页打开并避免让电脑休眠；浏览器在后台可能延迟提醒。</footer></div><div id="glass" class="glass" role="status"></div>
 <script>
 'use strict';
@@ -140,7 +154,7 @@ function render(){
    <td><span class="${mandatory?'percent':''}">${safe(status)} · ${safe(prob)}%</span>${mandatory?'<span class="must">必刷</span>':''}</td>
    </tr>`;
  }).join('')||`<tr><td colspan="${merged?6:5}">暂无云端 Boss 数据</td></tr>`;
- document.getElementById('summary').textContent=(merged?'新区＋老区合并':mode==='new'?'新区':'老区')+' · '+items.length+' 条 Boss · 🔵 蓝色名称为下一个即将刷新 · 灰色为已过期 · 🔴 100% 必刷 · 每30秒读取云端 · 只读';
+ document.getElementById('summary').textContent=(merged?'新区＋老区合并':mode==='new'?'新区':'老区')+' · '+items.length+' 条 Boss · 🔵 蓝色名称为下一个即将刷新 · 灰色为已过期 · 🔴 100% 必刷 · 每10秒读取云端 · 只读';
 }
-document.getElementById('volume').addEventListener('input',()=>{updateSettingView();saveSettings()});document.getElementById('advance').addEventListener('change',saveSettings);settingsInit();loadBoth();setInterval(()=>{render();checkAlerts()},1000);setInterval(loadBoth,30000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)loadBoth()});
+document.getElementById('volume').addEventListener('input',()=>{updateSettingView();saveSettings()});document.getElementById('advance').addEventListener('change',saveSettings);settingsInit();loadBoth();setInterval(()=>{render();checkAlerts()},1000);setInterval(loadBoth,10000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)loadBoth()});
 </script></body></html>
