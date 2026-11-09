@@ -795,40 +795,81 @@ tbody tr:last-child td { border-bottom: none; }
     </div>
 </div>
 
-<!-- 云端管理员授权：密码不进入 HTML / localStorage -->
+<!-- 云端管理员授权：30 天安全会话，密码不写入 HTML / localStorage -->
 <div class="modal-overlay" id="cloudSettingsOverlay"><div class="modal" style="max-width:490px">
 <h3>🔐 管理员授权</h3>
-<p style="color:#aab4c6;font-size:12px;line-height:1.7">JSONBin 密钥保存在 Cloudflare 服务端。请输入你在 Pages 设置的管理员密码，仅保留在当前页面内存里。朋友使用独立只读页面，无需密码。</p>
-<label>管理员密码</label><input id="adminPasswordInput" type="password" autocomplete="off" placeholder="Cloudflare ADMIN_PASSWORD"/>
+<p style="color:#aab4c6;font-size:12px;line-height:1.7">首次输入 Cloudflare 管理员密码后，可在本浏览器保持 30 天登录。密码不会保存到浏览器；服务器使用安全 Cookie 识别授权。请勿在公共电脑上勾选记住登录。</p>
+<label>管理员密码</label><input id="adminPasswordInput" type="password" autocomplete="current-password" placeholder="Cloudflare ADMIN_PASSWORD"/>
+<label style="display:flex;align-items:center;gap:8px;margin-top:12px;cursor:pointer"><input id="rememberAdmin30" type="checkbox" checked style="width:auto"/> 记住登录状态 30 天（私人电脑推荐）</label>
 <div id="cloudConnectionLabel" style="color:#93c5fd;font-size:12px;margin-top:8px">云端托管模式</div>
-<div class="modal-footer"><button class="btn btn-outline" onclick="closeCloudSettings()">取消</button><button class="btn btn-danger" onclick="clearCloudSettings()">退出管理授权</button><button class="btn btn-primary" onclick="saveCloudSettings()">保存本次授权</button></div>
+<div class="modal-footer"><button class="btn btn-outline" onclick="closeCloudSettings()">取消</button><button class="btn btn-danger" onclick="clearCloudSettings()">退出管理授权</button><button class="btn btn-primary" onclick="saveCloudSettings()" id="cloudLoginBtn">登录 / 保存授权</button></div>
 </div></div>
 
 <script>
-    // 云端凭证不写入 HTML 源码。仅在当前设备的浏览器存储中读取用户自己填写的配置。
-    // 注意：前端 localStorage 不是安全的密钥保险库；请使用受限密钥、不要共享已配置的浏览器环境。
-    // 通过同源 Cloudflare Pages Functions 访问 JSONBin。密钥仅保存在服务端。
-    let adminPassword = '';
+    // 只在服务端验证密码；浏览器仅保存服务器签发的 HttpOnly 登录 Cookie。
+    let adminAuthenticated = false;
     function cloudReady() { return true; }
     function getBinId() { return mode; }
     function updateCloudConnectionLabel() {
         const el = document.getElementById('cloudConnectionLabel');
-        if (el) el.textContent = adminPassword ? '✅ 本次页面已输入管理员密码' : '🔒 尚未输入管理员密码；仅可下载';
+        if (el) el.textContent = adminAuthenticated ? '✅ 已登录管理员（会话有效）' : '🔒 未登录管理员；仍可查看与下载';
     }
-    function openCloudSettings() { document.getElementById('cloudSettingsOverlay').style.display='flex'; updateCloudConnectionLabel(); }
+    function openCloudSettings() {
+        document.getElementById('cloudSettingsOverlay').style.display='flex';
+        updateCloudConnectionLabel();
+    }
     function closeCloudSettings() { document.getElementById('cloudSettingsOverlay').style.display='none'; }
-    function saveCloudSettings() {
-        adminPassword = document.getElementById('adminPasswordInput').value;
-        if(!adminPassword) return showToast('请填写管理员密码');
-        uploadModeCheck.checked = false; toggleUploadMode();
-        updateCloudConnectionLabel(); closeCloudSettings();
-        showToast('🔐 已保存本次页面的授权；首次上传时由服务端验证');
+    async function checkAdminSession() {
+        try {
+            const res = await fetch('/api/boss?action=session', {credentials:'same-origin',cache:'no-store'});
+            const data = await res.json();
+            adminAuthenticated = !!(res.ok && data.authenticated);
+        } catch (e) { adminAuthenticated = false; }
+        updateCloudConnectionLabel();
+        // 保持用户手动选择的上传开关；无有效登录时禁止上传。
+        if (!adminAuthenticated && uploadModeCheck.checked) {
+            uploadModeCheck.checked=false;
+            toggleUploadMode();
+        }
+        return adminAuthenticated;
     }
-    function clearCloudSettings() {
-        adminPassword = '';
-        document.getElementById('adminPasswordInput').value = '';
-        uploadModeCheck.checked=false; toggleUploadMode();
-        updateCloudConnectionLabel(); closeCloudSettings();
+    async function saveCloudSettings() {
+        const input = document.getElementById('adminPasswordInput');
+        const password = input.value;
+        if(!password) return showToast('请填写管理员密码');
+        const btn = document.getElementById('cloudLoginBtn');
+        btn.disabled=true; btn.textContent='验证中…';
+        try {
+            const remember = document.getElementById('rememberAdmin30').checked;
+            const response = await fetch('/api/boss?action=login', {
+                method:'POST', credentials:'same-origin',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({password,remember})
+            });
+            if(!response.ok) throw new Error(response.status===401?'密码不正确':'登录失败（HTTP '+response.status+'）');
+            adminAuthenticated = true;
+            input.value='';
+            updateCloudConnectionLabel();
+            closeCloudSettings();
+            showToast(remember?'🔐 登录成功：本浏览器 30 天内免输密码':'🔐 登录成功：关闭浏览器后需要重新登录');
+        } catch(e) {
+            adminAuthenticated = false;
+            showToast('❌ '+e.message);
+        } finally {
+            // 无论成功失败，不在页面内存或输入框中留下密码。
+            input.value='';btn.disabled=false;btn.textContent='登录 / 保存授权';
+        }
+    }
+    async function clearCloudSettings() {
+        try {
+            const response = await fetch('/api/boss?action=logout',{method:'POST',credentials:'same-origin'});
+            if(!response.ok) throw new Error('HTTP '+response.status);
+        } catch(e) { return showToast('⚠️ 退出失败，请检查网络后重试'); }
+        adminAuthenticated=false;
+        document.getElementById('adminPasswordInput').value='';
+        uploadModeCheck.checked=false;toggleUploadMode();
+        updateCloudConnectionLabel();closeCloudSettings();
+        showToast('🔒 已退出当前浏览器的管理授权');
     }
 
     const FACTORY_BOSSES = [
@@ -1223,10 +1264,10 @@ tbody tr:last-child td { border-bottom: none; }
 
     function toggleUploadMode() {
         uploadEnabled = uploadModeCheck.checked;
-        if (uploadEnabled && !adminPassword) {
+        if (uploadEnabled && !adminAuthenticated) {
             uploadEnabled = false;
             uploadModeCheck.checked = false;
-            showToast('⚠️ 请先在「更多 → 管理员授权」输入密码');
+            showToast('⚠️ 请先在「更多 → 管理员授权」登录');
         }
         if (uploadEnabled) {
             modeTag.textContent = '✏️ 可上传';
@@ -1242,16 +1283,19 @@ tbody tr:last-child td { border-bottom: none; }
     }
 
     async function syncToCloud() {
-        if (!uploadEnabled || !adminPassword) return showToast('⚠️ 请先启用上传模式并输入管理员密码');
+        if (!uploadEnabled || !adminAuthenticated) return showToast('⚠️ 请先启用上传模式并登录管理员');
         cloudStatus.textContent='⏳ 同步中...';cloudStatus.className='cloud-status syncing';
         try {
             const data={bosses:bosses,_catalog:{version:2,zones:ZONE_OPTIONS,bosses:DEFAULT_BOSSES},
                 _remindedBosses:Array.from(remindedBosses),_stoppedFlashing:Array.from(stoppedFlashing),
                 mode:mode,updatedAt:new Date().toISOString()};
             const response=await fetch('/api/boss?mode='+encodeURIComponent(mode),{
-                method:'PUT',headers:{'Content-Type':'application/json','X-Admin-Password':adminPassword},
+                method:'PUT',credentials:'same-origin',headers:{'Content-Type':'application/json'},
                 body:JSON.stringify(data)});
-            if(!response.ok) throw new Error('HTTP '+response.status+' '+(await response.text()).slice(0,140));
+            if(!response.ok) {
+                if(response.status===401){adminAuthenticated=false;updateCloudConnectionLabel();}
+                throw new Error(response.status===401?'管理员登录已失效，请重新登录':'HTTP '+response.status+' '+(await response.text()).slice(0,140));
+            }
             cloudStatus.textContent='✅ 已同步';cloudStatus.className='cloud-status synced';
             showToast('☁️ 云端同步成功，好友页面稍后会自动刷新');
         } catch(e) {
@@ -2684,6 +2728,7 @@ tbody tr:last-child td { border-bottom: none; }
     updateUndoState();
     init();
     updateCloudConnectionLabel();
+    checkAdminSession();
 </script>
 </body>
 </html>
