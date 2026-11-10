@@ -85,7 +85,7 @@ body.mode-merge tr.merge-new,body.mode-merge tr.merge-old {background:transparen
 </style></head><body class="mode-new"><div class="wrap">
 <header><div><h1>⚔️ Boss 刷新</h1><div class="status" id="status">正在连接云端…</div></div><div class="tools"><button id="newBtn" class="active" onclick="selectMode('new')">🆕 新区</button><button id="oldBtn" class="old" onclick="selectMode('old')">🕰️ 老区</button><button id="mergeBtn" onclick="selectMode('merge')">📊 合并查看</button><button onclick="loadBoth()">↻ 刷新</button></div></header>
 <div class="remindBar"><div class="remindTools"><span class="bar" id="clock">🇨🇳 北京 --:--:--</span><label>🔔 提前</label><select id="advance"><option value="1000">1 秒（到点提醒）</option><option value="60000">1 分钟</option><option value="120000">2 分钟</option><option value="180000">3 分钟</option><option value="300000">5 分钟</option></select><label>🔊 音量</label><input type="range" min="0" max="100" value="70" id="volume"><span id="volumeText" class="minor">70%</span></div><div class="remindTools"><span class="minor" id="remindState">提醒已开启 · 请测试声音</span><button id="toggleBtn" onclick="toggleAlerts()">⏸ 暂停</button><button onclick="testAlert()">🔔 测试声音</button></div></div>
-<div class="summary" id="summary">新区、老区均每 10 秒检查云端；浏览器允许播放声音后才会播报</div><div class="panel"><table><thead><tr><th>地区</th><th>Boss</th><th>下次刷新（北京时间）</th><th>倒计时</th><th>状态 / 几率</th></tr></thead><tbody id="list"></tbody></table></div>
+<div class="summary" id="summary">新区、老区均每 60 秒检查云端；浏览器允许播放声音后才会播报</div><div class="panel"><table><thead><tr><th>地区</th><th>Boss</th><th>下次刷新（北京时间）</th><th>倒计时</th><th>状态 / 几率</th></tr></thead><tbody id="list"></tbody></table></div>
 <footer>好友只读模式 · 保留语音与到点提示 · 无法编辑或上传。请保持网页打开并避免让电脑休眠；浏览器在后台可能延迟提醒。</footer></div><div id="glass" class="glass" role="status"></div>
 <script>
 'use strict';
@@ -154,7 +154,7 @@ function render(){
    <td><span class="${mandatory?'percent':''}">${safe(status)} · ${safe(prob)}%</span>${mandatory?'<span class="must">必刷</span>':''}</td>
    </tr>`;
  }).join('')||`<tr><td colspan="${merged?6:5}">暂无云端 Boss 数据</td></tr>`;
- document.getElementById('summary').textContent=(merged?'新区＋老区合并':mode==='new'?'新区':'老区')+' · '+items.length+' 条 Boss · 🔵 蓝色名称为下一个即将刷新 · 灰色为已过期 · 🔴 100% 必刷 · 每10秒读取云端 · 只读';
+ document.getElementById('summary').textContent=(merged?'新区＋老区合并':mode==='new'?'新区':'老区')+' · '+items.length+' 条 Boss · 🔵 蓝色名称为下一个即将刷新 · 灰色为已过期 · 🔴 100% 必刷 · 每60秒读取云端 · 只读';
 }
-document.getElementById('volume').addEventListener('input',()=>{updateSettingView();saveSettings()});document.getElementById('advance').addEventListener('change',saveSettings);settingsInit();loadBoth();setInterval(()=>{render();checkAlerts()},1000);setInterval(loadBoth,10000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)loadBoth()});
+document.getElementById('volume').addEventListener('input',()=>{updateSettingView();saveSettings()});document.getElementById('advance').addEventListener('change',saveSettings);settingsInit();loadBoth();setInterval(()=>{render();checkAlerts()},1000);setInterval(loadBoth,60000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)loadBoth()});
 </script></body></html>
