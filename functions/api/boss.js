@@ -1,41 +1,116 @@
-// Cloudflare Pages Function: public reads, authenticated writes, 30-day signed sessions.
-// JSONBin credentials and ADMIN_PASSWORD exist only in Cloudflare environment secrets.
+// Boss Timer: safe two-stage JSONBin -> Cloudflare D1 migration.
+// DEFAULT: JSONBin remains active. Explicitly set STORAGE_BACKEND=d1 only after
+// BOTH modes are imported and verified. Same admin session / same-origin protection.
 const COOKIE_NAME = 'boss_admin_session';
 const SESSION_SECONDS = 30 * 24 * 60 * 60;
 const encoder = new TextEncoder();
+const MODES = new Set(['new','old']);
+const PAYLOAD_MAX = 300000;
+const CACHE_HEADERS = {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
 
-export async function onRequest({request, env}) {
+export async function onRequest({request,env}) {
   const url = new URL(request.url);
   const action = url.searchParams.get('action');
-  if (action) return authRequest(request, env, action);
+  if (action === 'login' || action === 'logout' || action === 'session') return authRequest(request,env,action);
+  if (action === 'storage-status') return storageStatus(request,env);
   const mode = url.searchParams.get('mode');
-  if (mode !== 'new' && mode !== 'old') return json({error:'Invalid mode'},400);
+  if (!MODES.has(mode)) return json({error:'Invalid mode'},400);
+  if (action === 'import-d1') return importD1(request,env,mode);
+  if (action) return json({error:'Unknown action'},404);
   if (!['GET','PUT'].includes(request.method)) return json({error:'Method not allowed'},405);
-  const binId = mode === 'new' ? env.JSONBIN_NEW_BIN_ID : env.JSONBIN_OLD_BIN_ID;
-  const masterKey = env.JSONBIN_MASTER_KEY;
-  if (!binId || !masterKey) return json({error:'Server is not configured'},503);
-  const headers = {'X-Master-Key':masterKey, 'Content-Type':'application/json'};
+  const backend = env.STORAGE_BACKEND === 'd1' ? 'd1' : 'jsonbin';
   if (request.method === 'PUT') {
     if (!sameOrigin(request)) return json({error:'Forbidden origin'},403);
     if (!(await isAuthenticated(request,env))) return json({error:'Unauthorized'},401);
     let data;
-    try { data=await request.json(); } catch { return json({error:'Invalid JSON'},400); }
-    if (!data || !Array.isArray(data.bosses) || data.bosses.length>500 || data.bosses.some(b=>!b||typeof b.name!=='string'||b.name.length>150))
-      return json({error:'Invalid boss data'},400);
-    const serialized=JSON.stringify(data);
-    if(serialized.length>300000) return json({error:'Payload too large'},413);
-    try {
-      const response=await fetch('https://api.jsonbin.io/v3/b/'+binId,{method:'PUT',headers,body:serialized});
-      if (!response.ok) return json({error:'JSONBin write failed',status:response.status},502);
-      return json({ok:true,mode,updatedAt:data.updatedAt||null});
-    } catch { return json({error:'Upstream unavailable'},502); }
+    try { data = await request.json(); } catch { return json({error:'Invalid JSON'},400); }
+    const problem = validateBossData(data);
+    if (problem) return json({error:problem},400);
+    if (backend === 'd1') {
+      if (!env.BOSS_DB) return json({error:'D1 binding BOSS_DB is missing'},503);
+      try {
+        // If either mode is unseeded, stop writes rather than clobbering it.
+        const row=await env.BOSS_DB.prepare('SELECT mode FROM boss_state WHERE mode=?').bind(mode).first();
+        if(!row) return json({error:'D1 mode not imported yet; open /migrate-d1.html first',mode},409);
+        await writeD1(env.BOSS_DB,mode,data);
+        return json({ok:true,mode,updatedAt:data.updatedAt||null,storage:'d1'});
+      } catch(e) {return json({error:'D1 write failed',detail:safeD1Error(e)},503);}
+    }
+    return writeJsonbin(env,mode,data);
   }
+  if(backend==='d1') {
+    if(!env.BOSS_DB) return json({error:'D1 binding BOSS_DB is missing'},503);
+    try {
+      const row=await env.BOSS_DB.prepare('SELECT payload FROM boss_state WHERE mode=?').bind(mode).first();
+      if(!row)return json({error:'D1 mode not imported yet',mode},503);
+      const data=JSON.parse(row.payload);
+      return json(data,200);
+    } catch(e) {return json({error:'D1 read failed',detail:safeD1Error(e)},503);}
+  }
+  return readJsonbin(env,mode);
+}
+
+function validateBossData(data) {
+  if (!data || typeof data !== 'object' || Array.isArray(data) || !Array.isArray(data.bosses)) return 'Missing bosses array';
+  if (data.bosses.length > 500 || data.bosses.some(b=>!b||typeof b.name!=='string'||b.name.length>150)) return 'Invalid boss data';
+  if (JSON.stringify(data).length > PAYLOAD_MAX) return 'Payload too large';
+  return null;
+}
+function safeD1Error(e){
+  const msg=String(e?.message||'Unknown D1 failure');
+  // Avoid SQL contents or backend details in public errors.
+  return /no such table/i.test(msg) ? 'Run schema.sql in the D1 console first' : 'Check D1 binding and database schema';
+}
+async function writeD1(db,mode,data) {
+  await db.prepare('INSERT INTO boss_state (mode,payload,updated_at) VALUES (?,?,?) ON CONFLICT(mode) DO UPDATE SET payload=excluded.payload, updated_at=excluded.updated_at')
+    .bind(mode,JSON.stringify(data),new Date().toISOString()).run();
+}
+async function storageStatus(request,env) {
+  if(request.method!=='GET')return json({error:'Method not allowed'},405);
+  if(!env.BOSS_DB)return json({configured:false,backend:env.STORAGE_BACKEND==='d1'?'d1':'jsonbin',modes:{new:false,old:false}});
   try {
-    const response=await fetch('https://api.jsonbin.io/v3/b/'+binId+'/latest',{headers:{'X-Master-Key':masterKey},cf:{cacheTtl:0}});
-    if (!response.ok) return json({error:'JSONBin read failed',status:response.status},502);
+    const result=await env.BOSS_DB.prepare('SELECT mode, LENGTH(payload) AS bytes, updated_at FROM boss_state WHERE mode IN (?,?)').bind('new','old').all();
+    const modes={new:null,old:null};
+    for(const row of result.results||[]) modes[row.mode]={bytes:row.bytes,updatedAt:row.updated_at};
+    return json({configured:true,backend:env.STORAGE_BACKEND==='d1'?'d1':'jsonbin',modes});
+  } catch(e){return json({error:'D1 status failed',detail:safeD1Error(e)},503);}
+}
+async function importD1(request,env,mode) {
+  if(request.method!=='POST')return json({error:'Method not allowed'},405);
+  if(!sameOrigin(request))return json({error:'Forbidden origin'},403);
+  if(!(await isAuthenticated(request,env)))return json({error:'Unauthorized'},401);
+  if(!env.BOSS_DB)return json({error:'D1 binding BOSS_DB is missing'},503);
+  // Import is intentionally separate from active production write path.
+  if(env.STORAGE_BACKEND==='d1')return json({error:'Imports disabled after D1 activation'},409);
+  let data;
+  try {data=await request.json();}catch{return json({error:'Invalid JSON'},400);}
+  const problem=validateBossData(data);
+  if(problem)return json({error:problem},400);
+  try {
+    const old=await env.BOSS_DB.prepare('SELECT mode FROM boss_state WHERE mode=?').bind(mode).first();
+    if(old)return json({error:'D1 data already imported for this mode. Re-import is blocked to prevent overwriting.',mode},409);
+    await writeD1(env.BOSS_DB,mode,data);
+    return json({ok:true,imported:true,mode,bossCount:data.bosses.length});
+  } catch(e){return json({error:'D1 import failed',detail:safeD1Error(e)},503);}
+}
+async function readJsonbin(env,mode){
+  const binId = mode==='new'?env.JSONBIN_NEW_BIN_ID:env.JSONBIN_OLD_BIN_ID;
+  if(!binId||!env.JSONBIN_MASTER_KEY)return json({error:'JSONBin not configured'},503);
+  try {
+    const response=await fetch('https://api.jsonbin.io/v3/b/'+binId+'/latest',{headers:{'X-Master-Key':env.JSONBIN_MASTER_KEY},cf:{cacheTtl:0}});
+    if(!response.ok)return json({error:'JSONBin read failed',status:response.status},502);
     const content=await response.json();
     return json(content.record||{},200);
-  } catch { return json({error:'Upstream unavailable'},502); }
+  }catch{return json({error:'Upstream unavailable'},502);}
+}
+async function writeJsonbin(env,mode,data){
+  const binId=mode==='new'?env.JSONBIN_NEW_BIN_ID:env.JSONBIN_OLD_BIN_ID;
+  if(!binId||!env.JSONBIN_MASTER_KEY)return json({error:'JSONBin not configured'},503);
+  try {
+    const response=await fetch('https://api.jsonbin.io/v3/b/'+binId,{method:'PUT',headers:{'X-Master-Key':env.JSONBIN_MASTER_KEY,'Content-Type':'application/json'},body:JSON.stringify(data)});
+    if(!response.ok)return json({error:'JSONBin write failed',status:response.status},502);
+    return json({ok:true,mode,updatedAt:data.updatedAt||null,storage:'jsonbin'});
+  }catch{return json({error:'Upstream unavailable'},502);}
 }
 
 async function authRequest(request, env, action) {
