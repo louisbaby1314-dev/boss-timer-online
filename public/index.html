@@ -1626,6 +1626,7 @@ tbody tr:last-child td { border-bottom: none; }
                                 <button class="btn-sm row-more-btn" onclick="toggleRowMenu('${b.id}', event)" title="更多操作">⋯</button>
                                 <div class="row-menu" id="rowMenu_${b.id}">
                                     <button class="row-menu-item" onclick="editBoss('${b.id}')">✎ 编辑</button>
+                                    <button class="row-menu-item" onclick="clearBossTime('${b.id}')">↺ 清除刷新时间</button>
                                     ${remindRowHtml}
                                     <button class="row-menu-item danger" onclick="delBoss('${b.id}')">🗑 删除</button>
                                 </div>
@@ -2325,6 +2326,23 @@ tbody tr:last-child td { border-bottom: none; }
             const btn = document.getElementById('undoBtn');
             if (btn) btn.textContent = cnt > 0 ? '↩️ 撤销 (' + cnt + ')' : '↩️ 撤销';
         } catch (e) { /* ignore */ }
+    }
+
+    // 单独重置当前区服的一只 Boss：不删除记录、不影响另一分区。
+    // 仅保存至当前浏览器；管理员点击“上传”后才同步 D1。
+    function clearBossTime(id) {
+        const b = bosses.find(x => x.id === id);
+        if (!b) return showToast('未找到该 Boss，请刷新页面后重试');
+        if (!b.time) return showToast('「' + b.name + '」的刷新时间已经是未设置');
+        const area = mode === 'new' ? '新区' : '老区';
+        if (!confirm('仅清除【' + area + '】「' + b.name + '」的刷新时间？\n其他 Boss 和另一个区服都不会改变。\n清除后请点击“上传”同步到云端。')) return;
+        pushUndo('清除「' + b.name + '」的刷新时间');
+        b.time = '';
+        remindedBosses.delete(b.id);
+        stoppedFlashing.delete(b.id);
+        saveData();
+        renderTable();
+        showToast('✅ 「' + b.name + '」已设为未设置；请点击上传同步云端');
     }
 
     function delBoss(id) {
