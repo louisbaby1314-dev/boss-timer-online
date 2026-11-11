@@ -13,6 +13,7 @@ export async function onRequest({request,env}) {
   const action = url.searchParams.get('action');
   if (action === 'login' || action === 'logout' || action === 'session') return authRequest(request,env,action);
   if (action === 'storage-status') return storageStatus(request,env);
+  if (action === 'catalog-mutate' || action === 'reset-both') return changeBothModes(request,env,action);
   const mode = url.searchParams.get('mode');
   if (!MODES.has(mode)) return json({error:'Invalid mode'},400);
   if (action === 'import-d1') return importD1(request,env,mode);
@@ -48,6 +49,83 @@ export async function onRequest({request,env}) {
     } catch(e) {return json({error:'D1 read failed',detail:safeD1Error(e)},503);}
   }
   return readJsonbin(env,mode);
+}
+
+// Changes both D1 rows in one D1 batch; never update just one zone on a partial failure.
+async function changeBothModes(request,env,action) {
+  if (request.method!=='POST') return json({error:'Method not allowed'},405);
+  if (!sameOrigin(request)) return json({error:'Forbidden origin'},403);
+  if (!(await isAuthenticated(request,env))) return json({error:'Admin login required'},401);
+  if (env.STORAGE_BACKEND!=='d1' || !env.BOSS_DB) return json({error:'D1 must be active before modifying both modes'},409);
+  let body={};
+  if(action==='catalog-mutate') {
+    try{body=await request.json();}catch{return json({error:'Invalid JSON'},400);}
+    if(!['upsert','delete'].includes(body.op))return json({error:'Invalid operation'},400);
+    if(typeof body.previousName!=='string'||body.previousName.length>150)return json({error:'Invalid previous name'},400);
+    if(body.op==='upsert'){
+      const b=body.boss;
+      if(!b||typeof b.name!=='string'||!b.name.trim()||b.name.length>150||
+        !Number.isFinite(Number(b.interval))||Number(b.interval)<=0||
+        !Number.isFinite(Number(b.prob))||Number(b.prob)<0||Number(b.prob)>100||
+        typeof b.zone!=='string'||!b.zone.trim()||b.zone.length>80)
+        return json({error:'Invalid Boss configuration'},400);
+    }
+  }
+  try {
+    const rows=await env.BOSS_DB.prepare('SELECT mode,payload FROM boss_state WHERE mode IN (?,?)').bind('new','old').all();
+    const states={};
+    for(const r of rows.results||[])states[r.mode]=JSON.parse(r.payload);
+    if(!states.new||!states.old||!Array.isArray(states.new.bosses)||!Array.isArray(states.old.bosses))
+      return json({error:'Both D1 modes must be imported before this operation'},409);
+    const catalogs=[states.new._catalog,states.old._catalog].filter(c=>c&&Array.isArray(c.bosses));
+    const shared=new Map();
+    const zones=new Set();
+    for(const c of catalogs){
+      for(const z of c.zones||[])if(typeof z==='string'&&z.trim())zones.add(z);
+      for(const b of c.bosses){if(b&&typeof b.name==='string'&&b.name.trim())shared.set(b.name,{...b,time:''});}
+    }
+    // Recover legacy records from either mode rather than dropping them on reset.
+    for(const m of ['new','old'])for(const b of states[m].bosses){
+      if(b&&typeof b.name==='string'&&b.name.trim()&&!shared.has(b.name))
+        shared.set(b.name,{id:b.id,name:b.name,time:'',interval:Number(b.interval)||1,prob:Number(b.prob)||0,zone:b.zone||'未分区'});
+    }
+    if(action==='catalog-mutate'){
+      if(body.op==='upsert'){
+        const b=body.boss;const name=b.name.trim();const old=body.previousName.trim();
+        if(old&&old!==name&&shared.has(name))return json({error:'Target Boss name already exists'},409);
+        if(!old&&shared.has(name))return json({error:'Boss already exists'},409);
+        if(old&&old!==name)shared.delete(old);
+        const previous=catalogs.flatMap(c=>c.bosses).find(x=>x.name===old)||shared.get(old);
+        shared.set(name,{id:previous?.id||String(b.id||('custom_'+crypto.randomUUID())),name,time:'',interval:Number(b.interval),prob:Number(b.prob),zone:b.zone.trim()});
+        zones.add(b.zone.trim());
+      }else{
+        if(!body.previousName.trim())return json({error:'Missing Boss name'},400);
+        shared.delete(body.previousName.trim());
+        if(!shared.size)return json({error:'Cannot delete the last Boss'},409);
+      }
+    }
+    const catalog={version:2,zones:[...zones],bosses:[...shared.values()]};
+    for(const m of ['new','old']){
+      const s=states[m];
+      if(action==='reset-both'){
+        s.bosses=catalog.bosses.map(b=>({...b,id:(m==='new'?'n_':'o_')+String(b.id),time:''}));
+        s._remindedBosses=[];s._stoppedFlashing=[];
+      }else if(body.op==='upsert'){
+        const b=catalog.bosses.find(x=>x.name===body.boss.name.trim());
+        let found=false;
+        s.bosses=s.bosses.map(x=>{
+          if(x.name!==body.previousName.trim()&&x.name!==b.name)return x;
+          found=true;return {...x,name:b.name,interval:b.interval,prob:b.prob,zone:b.zone};
+        });
+        if(!found)s.bosses.push({...b,id:(m==='new'?'n_':'o_')+String(b.id),time:''});
+      }else s.bosses=s.bosses.filter(x=>x.name!==body.previousName.trim());
+      s._catalog=catalog;s.mode=m;s.updatedAt=new Date().toISOString();
+      const issue=validateBossData(s);if(issue)return json({error:'Invalid '+m+' state: '+issue},400);
+    }
+    await env.BOSS_DB.batch(['new','old'].map(m=>env.BOSS_DB.prepare(
+      'UPDATE boss_state SET payload=?,updated_at=? WHERE mode=?').bind(JSON.stringify(states[m]),new Date().toISOString(),m)));
+    return json({ok:true,new:states.new,old:states.old,operation:action});
+  }catch(e){return json({error:'D1 two-mode update failed',detail:safeD1Error(e)},503);}
 }
 
 function validateBossData(data) {
