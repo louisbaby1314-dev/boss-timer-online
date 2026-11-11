@@ -651,7 +651,7 @@ tbody tr:last-child td { border-bottom: none; }
             <button class="btn btn-outline" onclick="openCatalog()">⚙️ Boss / 地区管理</button>
             <button class="btn btn-outline" onclick="openCloudSettings()">🔐 管理员授权</button>
             <button class="btn btn-info" onclick="loadFromCloud()">📥 从云端下载</button>
-            <button class="btn btn-danger" onclick="resetDefaultData()">↺ 恢复默认</button>
+            <button class="btn btn-danger" onclick="resetDefaultData()">↺ 两区恢复默认</button>
         </div>
     </div>
     <input type="file" id="importFile" accept=".json" style="display:none" onchange="importData(event)" />
@@ -968,7 +968,34 @@ tbody tr:last-child td { border-bottom: none; }
         document.getElementById('catBossForm').style.display='block';
         document.getElementById('catBossName').focus();
     }
-    function saveCatalogBoss() {
+    // Shared D1 operations: success is reported only after BOTH modes have been saved.
+    async function callBothModes(action, payload={}) {
+        const response=await fetch('/api/boss?action='+encodeURIComponent(action),{
+            method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify(payload)
+        });
+        if(!response.ok) {
+            if(response.status===401){adminAuthenticated=false;updateCloudConnectionLabel();}
+            const info=await response.json().catch(()=>({}));
+            throw new Error(info.error||('HTTP '+response.status));
+        }
+        return response.json();
+    }
+    function useBothModeResponse(result) {
+        for(const m of ['new','old']){
+            const data=result[m];
+            if(!data || !Array.isArray(data.bosses))throw new Error('服务器返回的数据不完整');
+            localStorage.setItem('bossData_integrated_'+m,JSON.stringify(data));
+        }
+        const current=result[mode];
+        if(current._catalog)applyCatalog(current._catalog);
+        bosses=current.bosses.map(b=>({...b}));
+        remindedBosses=new Set(current._remindedBosses||[]);
+        stoppedFlashing=new Set(current._stoppedFlashing||[]);
+        remindedOther.clear();
+        renderTable();
+    }
+    async function saveCatalogBoss() {
         const idx=Number(document.getElementById('catEditIdx').value), old=idx>=0?DEFAULT_BOSSES[idx]:null;
         const name=document.getElementById('catBossName').value.trim();
         const interval=Number(document.getElementById('catBossHours').value);
@@ -977,19 +1004,24 @@ tbody tr:last-child td { border-bottom: none; }
         if(!name || !(interval>0) || !Number.isFinite(interval) || !(prob>=0&&prob<=100) || !zone)return showToast('请填写有效名称、刷新间隔、几率与地区');
         if(DEFAULT_BOSSES.some((b,i)=>i!==idx && b.name===name))return showToast('Boss名称已存在');
         if(old && old.name!==name && !confirm(`将「${old.name}」改名为「${name}」？新区和老区的对应记录都会更名。`))return;
+        if(!adminAuthenticated)return showToast('请先在「更多 → 管理员授权」登录，再新增 Boss');
         const next={id:old?.id||('custom_'+Date.now().toString(36)),name,time:'',interval,prob,zone};
-        if(old)DEFAULT_BOSSES[idx]=next;else DEFAULT_BOSSES.push(next);
-        persistCatalog();
-        updateBothSavedRecords(list=>{for(const b of list){if((old&&b.name===old.name)||(!old&&b.name===name)){b.name=name;b.interval=interval;b.prob=prob;b.zone=zone;}}});
-        document.getElementById('catBossForm').style.display='none';renderCatalog();showToast('✅ Boss 配置已保存');
+        try{
+            const result=await callBothModes('catalog-mutate',{op:'upsert',previousName:old?.name||'',boss:next});
+            useBothModeResponse(result);
+            document.getElementById('catBossForm').style.display='none';
+            renderCatalog();showToast('✅ 已同步到新区和老区；新 Boss 刷新时间为空');
+        }catch(e){showToast('❌ 两区保存失败，未修改本地配置：'+e.message);}
     }
-    function deleteCatalogBoss(i) {
+    async function deleteCatalogBoss(i) {
         const b=DEFAULT_BOSSES[i];if(!b)return;
-        if(!confirm(`删除「${b.name}」的基础配置？新区、老区的该 Boss 计时记录也会被移除。建议先备份数据。`))return;
+        if(!confirm(`确定从新区和老区同时删除「${b.name}」？请先确认已备份。`))return;
         if(DEFAULT_BOSSES.length<=1)return showToast('至少保留一个 Boss');
-        DEFAULT_BOSSES.splice(i,1);persistCatalog();
-        updateBothSavedRecords(list=>{for(let j=list.length-1;j>=0;j--)if(list[j].name===b.name)list.splice(j,1);});
-        renderCatalog();showToast('已删除 Boss 配置');
+        if(!adminAuthenticated)return showToast('请先登录管理员');
+        try{
+            const result=await callBothModes('catalog-mutate',{op:'delete',previousName:b.name});
+            useBothModeResponse(result);renderCatalog();showToast('✅ 两区已同步删除 Boss');
+        }catch(e){showToast('❌ 删除失败：'+e.message);}
     }
     function addCatalogZone() {
         const z=document.getElementById('catNewZone').value.trim();
@@ -2216,16 +2248,15 @@ tbody tr:last-child td { border-bottom: none; }
         reader.readAsText(file);
     }
 
-    function resetDefaultData() {
-        if (confirm('确定要恢复默认数据吗？')) {
-            pushUndo('恢复默认数据');
-            bosses = DEFAULT_BOSSES.map(b => ({ ...b, id: 'b' + Date.now() + Math.random() }));
-            remindedBosses.clear();
-            stoppedFlashing.clear();
-            saveData();
-            renderTable();
-            showToast('已恢复默认数据');
-        }
+    async function resetDefaultData() {
+        if(!confirm('确定把【新区和老区】全部 Boss 的刷新时间清空吗？\n会保留在 Boss／地区管理中新增的 Boss、地区、间隔和概率。\n此操作会同步到云端并覆盖两区当前时间，请先备份。'))return;
+        if(!adminAuthenticated)return showToast('请先在「更多 → 管理员授权」登录');
+        try {
+            const result=await callBothModes('reset-both');
+            useBothModeResponse(result);
+            renderCatalog();
+            showToast('✅ 新区和老区已恢复未设置时间的默认状态；自定义 Boss 已保留');
+        }catch(e){showToast('❌ 恢复失败，未修改数据：'+e.message);}
     }
 
     function toggleReminder() {
