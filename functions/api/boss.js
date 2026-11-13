@@ -100,12 +100,59 @@ async function applyOcrBatch(request,env,mode) {
 
 const CACHE_HEADERS = {'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
 
+// A single latest-upload snapshot per mode; no separate D1 migration needed.
+async function ensureUndoTable(db){
+ await db.prepare('CREATE TABLE IF NOT EXISTS boss_last_upload (mode TEXT PRIMARY KEY, before_payload TEXT NOT NULL, after_revision TEXT NOT NULL, created_at TEXT NOT NULL)').run();
+}
+function uploadConflicts(incoming,old){
+ const matches=new Map((old.bosses||[]).map(b=>[b.name,b]));
+ const conflicts=[];
+ for(const b of incoming.bosses||[]){
+   const existing=matches.get(b.name);if(!existing)continue;
+   const from=Date.parse(b.time||''),was=Date.parse(existing.time||'');
+   if(Number.isFinite(from)&&Number.isFinite(was)&&from<was)conflicts.push({name:b.name,reason:'本地刷新时间早于云端'});
+ }
+ return conflicts;
+}
+async function uploadCheck(request,env,mode){
+ if(request.method!=='POST')return json({error:'Method not allowed'},405);
+ if(!sameOrigin(request)||!(await isAuthenticated(request,env)))return json({error:'请先登录管理员'},401);
+ if(env.STORAGE_BACKEND!=='d1'||!env.BOSS_DB)return json({error:'仅支持 D1 云端'},409);
+ let incoming;try{incoming=await request.json()}catch{return json({error:'Invalid JSON'},400)}
+ const issue=validateBossData(incoming);if(issue)return json({error:issue},400);
+ const row=await env.BOSS_DB.prepare('SELECT payload,updated_at FROM boss_state WHERE mode=?').bind(mode).first();
+ if(!row)return json({error:'云端记录不存在'},409);
+ const prior=JSON.parse(row.payload);
+ return json({ok:true,revision:row.updated_at,conflicts:uploadConflicts(incoming,prior)});
+}
+async function undoUpload(request,env,mode){
+ if(request.method!=='POST')return json({error:'Method not allowed'},405);
+ if(!sameOrigin(request)||!(await isAuthenticated(request,env)))return json({error:'请先登录管理员'},401);
+ if(env.STORAGE_BACKEND!=='d1'||!env.BOSS_DB)return json({error:'仅支持 D1 云端'},409);
+ try{
+   await ensureUndoTable(env.BOSS_DB);
+   const [current,snap]=await Promise.all([
+     env.BOSS_DB.prepare('SELECT updated_at FROM boss_state WHERE mode=?').bind(mode).first(),
+     env.BOSS_DB.prepare('SELECT before_payload,after_revision FROM boss_last_upload WHERE mode=?').bind(mode).first()
+   ]);
+   if(!snap)return json({error:'没有可撤销的云端上传记录'},409);
+   if(current?.updated_at!==snap.after_revision)return json({error:'云端数据已有新修改，不能撤销以免覆盖其他人的更新'},409);
+   const old=JSON.parse(snap.before_payload);filterCross(old);
+   const rev=new Date().toISOString()+'-'+crypto.randomUUID();old.updatedAt=new Date().toISOString();
+   const res=await env.BOSS_DB.prepare('UPDATE boss_state SET payload=?,updated_at=? WHERE mode=? AND updated_at=?')
+      .bind(JSON.stringify(old),rev,mode,snap.after_revision).run();
+   if((res.meta?.changes||0)!==1)return json({error:'云端状态已变化，请重新确认'},409);
+   await env.BOSS_DB.prepare('DELETE FROM boss_last_upload WHERE mode=? AND after_revision=?').bind(mode,snap.after_revision).run();
+   return json({ok:true,mode});
+ }catch(e){return json({error:'撤销失败',detail:safeD1Error(e)},503)}
+}
 export async function onRequest({request,env}) {
   const url = new URL(request.url);
   const action = url.searchParams.get('action');
   if (action === 'login' || action === 'logout' || action === 'session') return authRequest(request,env,action);
   if (action === 'ocr-apply') { const mode=url.searchParams.get('mode'); return MODES.has(mode)?applyOcrBatch(request,env,mode):json({error:'Invalid mode'},400); }
   if (action === 'cross-delay') { const mode=url.searchParams.get('mode'); return MODES.has(mode)?delayCrossBatch(request,env,mode):json({error:'Invalid mode'},400); }
+  if(action==='upload-check'||action==='undo-upload'){const mode=url.searchParams.get('mode');return MODES.has(mode)?(action==='upload-check'?uploadCheck(request,env,mode):undoUpload(request,env,mode)):json({error:'Invalid mode'},400);}
   if (action === 'storage-status') return storageStatus(request,env);
   if (action === 'catalog-mutate' || action === 'reset-both') return changeBothModes(request,env,action);
   const mode = url.searchParams.get('mode');
@@ -129,7 +176,11 @@ export async function onRequest({request,env}) {
         if(!row) return json({error:'D1 mode not imported yet; open /migrate-d1.html first',mode},409);
         // Manual sync: merge current-event staged cross records by Boss name.
         // Never let stale tabs delete server cross records, revive old events, or overwrite newer timestamps.
-        const oldRow=await env.BOSS_DB.prepare('SELECT payload FROM boss_state WHERE mode=?').bind(mode).first();
+        const oldRow=await env.BOSS_DB.prepare('SELECT payload,updated_at FROM boss_state WHERE mode=?').bind(mode).first();
+        if(!oldRow||!data._expectedRevision||oldRow.updated_at!==data._expectedRevision)return json({error:'云端版本已变化，请重新检查后上传'},409);
+        const unsafe=uploadConflicts(data,JSON.parse(oldRow.payload));
+        if(unsafe.length)return json({error:'发现旧数据可能覆盖云端：'+unsafe.map(x=>x.name).slice(0,8).join('、')},409);
+        delete data._expectedRevision;
         if(oldRow){
           const old=JSON.parse(oldRow.payload);filterCross(old);
           const act=jstActivity();const byName=new Map((old._crossBosses||[]).map(b=>[b.name,b]));
@@ -151,7 +202,14 @@ export async function onRequest({request,env}) {
           data._crossBosses=[...byName.values()];
         }
         filterCross(data);
-        await writeD1(env.BOSS_DB,mode,data);
+        await ensureUndoTable(env.BOSS_DB);
+        const revision=new Date().toISOString()+'-'+crypto.randomUUID();
+        // D1 batch keeps the last-upload snapshot and the new state together.
+        const writeResults=await env.BOSS_DB.batch([
+          env.BOSS_DB.prepare('INSERT INTO boss_last_upload(mode,before_payload,after_revision,created_at) VALUES(?,?,?,?) ON CONFLICT(mode) DO UPDATE SET before_payload=excluded.before_payload,after_revision=excluded.after_revision,created_at=excluded.created_at').bind(mode,oldRow.payload,revision,new Date().toISOString()),
+          env.BOSS_DB.prepare('UPDATE boss_state SET payload=?,updated_at=? WHERE mode=? AND updated_at=?').bind(JSON.stringify(data),revision,mode,oldRow.updated_at)
+        ]);
+        if((writeResults[1]?.meta?.changes??0)!==1)return json({error:'上传时云端已变化，未覆盖云端，请重试'},409);
         return json({ok:true,mode,updatedAt:data.updatedAt||null,storage:'d1'});
       } catch(e) {return json({error:'D1 write failed',detail:safeD1Error(e)},503);}
     }
