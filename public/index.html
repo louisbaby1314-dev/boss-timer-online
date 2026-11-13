@@ -655,6 +655,7 @@ tbody tr:last-child td { border-bottom: none; }
     <div class="more-wrap" id="moreWrap">
         <button class="btn btn-outline" onclick="toggleMoreMenu()" id="moreBtn">⋯ 更多</button>
         <div class="more-menu" id="moreMenu">
+            <button class="btn btn-outline" onclick="cloudUndoLast()" title="仅撤销当前新区或老区最近一次手动云端上传">↶ 撤销上次云端上传</button>
             <button class="btn btn-danger" onclick="clearAllReminded()">✕ 清除提醒标记</button>
             <button class="btn btn-outline" onclick="openCatalog()">⚙️ Boss / 地区管理</button>
             <button class="btn btn-outline" onclick="openCloudSettings()">🔐 管理员授权</button>
@@ -1357,25 +1358,46 @@ tbody tr:last-child td { border-bottom: none; }
     }
 
     async function syncToCloud() {
-        if (!uploadEnabled || !adminAuthenticated) return showToast('⚠️ 请先启用上传模式并登录管理员');
-        cloudStatus.textContent='⏳ 同步中...';cloudStatus.className='cloud-status syncing';
+        if(!uploadEnabled||!adminAuthenticated)return showToast('⚠️ 请先开启上传模式并登录管理员');
+        const uploadedMode=mode;
+        cloudStatus.textContent='⏳ 上传安全检查中…';cloudStatus.className='cloud-status syncing';
         try {
             const data={bosses:bosses,_crossBosses:crossBosses,_catalog:{version:2,zones:ZONE_OPTIONS,bosses:DEFAULT_BOSSES},
-                _remindedBosses:Array.from(remindedBosses),_stoppedFlashing:Array.from(stoppedFlashing),
-                mode:mode,updatedAt:new Date().toISOString()};
-            const response=await fetch('/api/boss?mode='+encodeURIComponent(mode),{
-                method:'PUT',credentials:'same-origin',headers:{'Content-Type':'application/json'},
-                body:JSON.stringify(data)});
-            if(!response.ok) {
-                if(response.status===401){adminAuthenticated=false;updateCloudConnectionLabel();}
-                throw new Error(response.status===401?'管理员登录已失效，请重新登录':'HTTP '+response.status+' '+(await response.text()).slice(0,140));
+                _remindedBosses:[...remindedBosses],_stoppedFlashing:[...stoppedFlashing],mode,updatedAt:new Date().toISOString()};
+            // 当前云端版本校验，避免更新期间其他窗口/朋友同步覆盖；服务端也校验。
+            const check=await fetch('/api/boss?action=upload-check&mode='+encodeURIComponent(uploadedMode),{
+                method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
+            const preview=await check.json().catch(()=>({}));
+            if(!check.ok)throw new Error(preview.error||'安全检查失败 HTTP '+check.status);
+            const conflicts=preview.conflicts||[];
+            if(conflicts.length){
+                const details=conflicts.slice(0,6).map(x=>x.name+'（'+x.reason+'）').join('、');
+                throw new Error('云端有较新的记录：'+details+'。本次未上传。请先下载云端数据后核对。');
             }
+            if(!confirm('上传安全检查通过。确认将当前'+(uploadedMode==='new'?'新区':'老区')+'的修改上传到 D1？')){
+                cloudStatus.textContent='☁️ 已取消';cloudStatus.className='cloud-status';return;
+            }
+            const response=await fetch('/api/boss?mode='+encodeURIComponent(uploadedMode),{
+                method:'PUT',credentials:'same-origin',headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({...data,_expectedRevision:preview.revision})});
+            const res=await response.json().catch(()=>({}));
+            if(!response.ok){if(response.status===401){adminAuthenticated=false;updateCloudConnectionLabel();}
+                throw new Error(res.error||('HTTP '+response.status));}
             cloudStatus.textContent='✅ 已同步';cloudStatus.className='cloud-status synced';
-            showToast('☁️ 云端同步成功，好友页面稍后会自动刷新');
-        } catch(e) {
-            cloudStatus.textContent='❌ 同步失败';cloudStatus.className='cloud-status error';
-            showToast('上传失败：'+e.message);
-        }
+            showToast('✅ 已上传到云端。如误上传，可从「更多」撤销上次云端上传。');
+        }catch(e){cloudStatus.textContent='❌ 上传未完成';cloudStatus.className='cloud-status error';
+            alert('上传未执行：'+e.message);showToast('上传安全检查未通过：'+e.message);}
+    }
+    async function cloudUndoLast(){
+        if(!adminAuthenticated||!uploadEnabled)return alert('请先开启上传模式并登录管理员。');
+        const m=mode;if(!confirm('只撤销'+(m==='new'?'新区':'老区')+'最后一次手动云端上传，且不会撤销其他人的后续更新。确认继续？'))return;
+        try{
+            const resp=await fetch('/api/boss?action=undo-upload&mode='+encodeURIComponent(m),{
+                method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'});
+            const data=await resp.json().catch(()=>({}));if(!resp.ok)throw new Error(data.error||'HTTP '+resp.status);
+            cloudStatus.textContent='↶ 云端已撤销';cloudStatus.className='cloud-status syncing';
+            alert('云端最后一次上传已撤销。当前本地页面尚未改变，请点击「从云端下载」查看恢复后的数据。');
+        }catch(e){alert('撤销失败：'+e.message);}
     }
     async function loadFromCloud() {
         cloudStatus.textContent='⏳ 下载中...';cloudStatus.className='cloud-status syncing';
@@ -1423,40 +1445,23 @@ tbody tr:last-child td { border-bottom: none; }
         } catch (e) {}
     }
 
-    function speakBossAlert(bossName, alertMode) {
+    function speakBossAlert(bossName, alertMode, isCross=false) {
         try {
             if ('speechSynthesis' in window) {
-                // 不再无条件 cancel()：多 Boss 排队时会把上一条播报打断（只听到开头"老/新"就断掉）
-                // 改为用 utterance.onend 播完一条再播下一条，保证完整播报
-                const prefix = (alertMode || mode) === 'new' ? '新区 ' : '老区 ';
-                const crossPrefix = String(bossName).startsWith('跨服 ' ) ? '' : '本服 ';
-                const utterance = new SpeechSynthesisUtterance(prefix + crossPrefix + bossName + '，即将刷新！');
-                utterance.lang = 'zh-CN';
-                utterance.rate = 0.85;
-                utterance.pitch = 1.1;
-                const volumeValue = parseInt(document.getElementById('volumeSlider').value) || 70;
-                utterance.volume = volumeValue / 100;
-
-                const advance = () => {
-                    if (speakQueue.length > 0) setTimeout(processSpeakQueue, 400);
-                    else isSpeaking = false;
-                };
-                utterance.onend = advance;
-                utterance.onerror = advance;
-
+                const prefix=(alertMode||mode)==='new'?'新区 ':'老区 ';
+                // 本服沿用原播报；跨服明确增加“跨服”前缀。
+                const text=prefix+(isCross?'跨服 ':'')+bossName+'，即将刷新！';
+                const utterance=new SpeechSynthesisUtterance(text);
+                utterance.lang='zh-CN';utterance.rate=.85;utterance.pitch=1.05;
+                utterance.volume=Number(volumeSlider.value)/100;
+                let advanced=false;
+                const advance=()=>{if(advanced)return;advanced=true;clearTimeout(window.__speakGuard);if(speakQueue.length)setTimeout(processSpeakQueue,400);else isSpeaking=false;};
+                utterance.onend=advance;utterance.onerror=advance;
                 window.speechSynthesis.speak(utterance);
-
-                // 兜底：某些环境 TTS 不触发 onend，20 秒后强制继续队列，避免卡住
                 clearTimeout(window.__speakGuard);
-                window.__speakGuard = setTimeout(() => {
-                    if (speakQueue.length > 0) setTimeout(processSpeakQueue, 100);
-                    else isSpeaking = false;
-                }, 20000);
-            }
-        } catch (e) {
-            if (speakQueue.length > 0) setTimeout(processSpeakQueue, 500);
-            else isSpeaking = false;
-        }
+                window.__speakGuard=setTimeout(advance,20000);
+            } else isSpeaking=false;
+        } catch(e){if(speakQueue.length)setTimeout(processSpeakQueue,500);else isSpeaking=false;}
     }
 
     // 当前区 + 另一区 的 Boss 全量（另一区实时读 localStorage，保证数据最新）
@@ -1491,7 +1496,7 @@ tbody tr:last-child td { border-bottom: none; }
         if(item.cross && (!jstCrossActivity().active || (item.time && Date.parse(item.time)>=crossEventEndMs(jstCrossActivity().id)))){
             if(speakQueue.length>0)setTimeout(processSpeakQueue,100);else isSpeaking=false;return;
         }
-        speakBossAlert(item.name, item.mode);
+        speakBossAlert(item.name, item.mode, !!item.cross);
         showDueGlass(item.name, item.mode);
         if (isCur && !item.cross) remindedBosses.add(item.id);
         else remindedOther.add(item.key);
@@ -1552,7 +1557,7 @@ tbody tr:last-child td { border-bottom: none; }
             const isCur = item.boss._mode === mode;
             const alreadyMarked = isCur && !item.boss._cross ? remindedBosses.has(item.boss.id) : remindedOther.has(item.key);
             if (!alreadyQueued && !alreadyMarked) {
-                speakQueue.push({ key: item.key, id: item.boss.id, name: item.boss._cross?'跨服 '+item.boss.name:item.boss.name, mode: item.boss._mode, cross:!!item.boss._cross, time:item.boss.time });
+                speakQueue.push({ key: item.key, id: item.boss.id, name: item.boss.name, mode: item.boss._mode, cross:!!item.boss._cross, time:item.boss.time });
             }
         }
 
@@ -2800,7 +2805,14 @@ tbody tr:last-child td { border-bottom: none; }
         if(!x||x.length<2||x.length>25||!/[\u3400-\u9fff]/u.test(x)||/\d|参与|人数|刷新|击退|星期|小时|分钟/.test(x)||/^(首领|道具|参与者|通知|出没时间|击退时间)$/.test(x))return false;
         if(ocrParseTime(x))return false;return true;}
     function ocrNormalize(n){return String(n||'').normalize('NFKC').replace(/[\s·・:：]/g,'')}
-    function ocrCatalogMatch(name){const n=ocrNormalize(name);const c=DEFAULT_BOSSES.find(b=>ocrNormalize(b.name)===n)||bosses.find(b=>ocrNormalize(b.name)===n);return c||null;}
+    function ocrCatalogMatch(name){
+      // 只允许完整名称 / 用户明确登记的别名，不使用包含匹配。
+      const n=ocrNormalize(name);
+      const exact=DEFAULT_BOSSES.find(b=>ocrNormalize(b.name)===n)||bosses.find(b=>ocrNormalize(b.name)===n);
+      if(exact)return exact;
+      let aliases={};try{aliases=JSON.parse(localStorage.getItem('bossOcrConfirmedAliases')||'{}')}catch{}
+      const mapped=aliases[n];return mapped?(DEFAULT_BOSSES.find(b=>b.name===mapped)||bosses.find(b=>b.name===mapped)||null):null;
+    }
     // V4.3: require a strong visual match to the full purple shield-with-sword emblem.
     // The reference is cropped from the user-supplied real game screenshot, not a generic purple swatch.
     // A conservative threshold favors false negatives (manual cross selection) over false positives.
@@ -3122,6 +3134,7 @@ tbody tr:last-child td { border-bottom: none; }
     window.toggleReminder = toggleReminder; window.manualRemind = manualRemind;
     window.testAlert = testAlert; window.stopFlashing = stopFlashing;
     window.importData = importData;
+    window.cloudUndoLast=cloudUndoLast;
     window.syncToCloud = syncToCloud; window.loadFromCloud = loadFromCloud;
     window.toggleUploadMode = toggleUploadMode;
     window.openMergeView = openMergeView; window.closeMergeModal = closeMergeModal;
