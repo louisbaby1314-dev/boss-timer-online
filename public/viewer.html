@@ -114,17 +114,21 @@ function sound(){try{unlockAudio();if(!audioCtx)return;const vol=Number(document
 function enqueueSpeech(text){if(!('speechSynthesis' in window))return;voiceQueue.push(text);processVoice();}
 function processVoice(){if(speaking||!voiceQueue.length)return;speaking=true;const text=voiceQueue.shift();try{const u=new SpeechSynthesisUtterance(text);u.lang='zh-CN';u.rate=.9;u.volume=Number(document.getElementById('volume').value)/100;let done=false;const finish=()=>{if(done)return;done=true;speaking=false;setTimeout(processVoice,180)};u.onend=finish;u.onerror=finish;speechSynthesis.speak(u);setTimeout(finish,12000)}catch(e){speaking=false;processVoice()}}
 function glass(text){const x=document.getElementById('glass');x.textContent=text;x.classList.add('show');clearTimeout(glass.timer);glass.timer=setTimeout(()=>x.classList.remove('show'),7000)}
-function fire(m,b,testing=false){sound();const title=(m==='new'?'新区 ':'老区 ')+b.name;glass('🔔 '+title+' · 即将刷新');enqueueSpeech(title+'，即将刷新！');if(!testing&&'Notification'in window&&Notification.permission==='granted'){try{new Notification(title,{body:'Boss 即将刷新',tag:'boss-'+m+'-'+b.id})}catch{}}}
+function fire(m,b,testing=false){sound();const title=(m==='new'?'新区 ':'老区 ')+(b.scope==='cross'?'跨服 ':'本服 ')+b.name;glass('🔔 '+title+' · 即将刷新');enqueueSpeech(title+'，即将刷新！');if(!testing&&'Notification'in window&&Notification.permission==='granted'){try{new Notification(title,{body:'Boss 即将刷新',tag:'boss-'+m+'-'+b.id})}catch{}}}
 function testAlert(){unlockAudio();fire(mode,{name:'提醒测试',id:'test'},true);document.getElementById('remindState').textContent='🔊 已触发测试；如无声音请检查浏览器静音/系统音量';}
-function checkAlerts(){if(!enabled)return;const now=Date.now(),lead=Number(document.getElementById('advance').value)||1000;for(const m of ['new','old'])for(const b of records[m]){const t=timeVal(b.time);if(!Number.isFinite(t))continue;const key=m+'|'+(b.id||b.name)+'|'+t;if(seen.has(key))continue;const diff=t-now;if(diff<=lead&&diff>=-60000){seen.set(key,now);fire(m,b)}}if(seen.size>600){for(const [k,v] of seen)if(now-v>86400000)seen.delete(k)}}
-async function loadBoth(){const el=document.getElementById('status');el.textContent='⏳ 正在更新新区和老区…';const results=await Promise.allSettled(['new','old'].map(async m=>{const resp=await fetch('/api/boss?mode='+m,{cache:'no-store'});if(!resp.ok)throw new Error(m+' HTTP '+resp.status);const data=await resp.json();records[m]=Array.isArray(data.bosses)?data.bosses:[];meta[m]={catalog:Array.isArray(data._catalog?.bosses)?data._catalog.bosses:[],updatedAt:data.updatedAt||''};}));let failures=results.map((r,i)=>r.status==='rejected'?(['new','old'][i]+': '+r.reason.message):'').filter(Boolean);lastError=failures.join('; ');el.classList.toggle('error',!!failures.length);el.textContent=failures.length?'⚠️ '+lastError:'✅ 新区、老区云端数据已连接 · 北京时间';render();}
+function checkAlerts(){if(!enabled)return;const now=Date.now(),lead=Number(document.getElementById('advance').value)||1000;for(const m of ['new','old'])for(const b of visibleRecords(m)){const t=timeVal(b.time);if(!Number.isFinite(t))continue;const key=m+'|'+(b.id||b.name)+'|'+t;if(seen.has(key))continue;const diff=t-now;if(diff<=lead&&diff>=-60000){seen.set(key,now);fire(m,b)}}if(seen.size>600){for(const [k,v] of seen)if(now-v>86400000)seen.delete(k)}}
+async function loadBoth(){const el=document.getElementById('status');el.textContent='⏳ 正在更新新区和老区…';const results=await Promise.allSettled(['new','old'].map(async m=>{const resp=await fetch('/api/boss?mode='+m,{cache:'no-store'});if(!resp.ok)throw new Error(m+' HTTP '+resp.status);const data=await resp.json();records[m]=Array.isArray(data.bosses)?data.bosses:[];crossRecords[m]=Array.isArray(data._crossBosses)?data._crossBosses:[];meta[m]={catalog:Array.isArray(data._catalog?.bosses)?data._catalog.bosses:[],updatedAt:data.updatedAt||''};}));let failures=results.map((r,i)=>r.status==='rejected'?(['new','old'][i]+': '+r.reason.message):'').filter(Boolean);lastError=failures.join('; ');el.classList.toggle('error',!!failures.length);el.textContent=failures.length?'⚠️ '+lastError:'✅ 新区、老区云端数据已连接 · 北京时间';render();}
+function jstCrossActivity(time=Date.now()){const d=new Date(time+9*3600000),day=d.getUTCDay(),h=d.getUTCHours();const active=[1,3,5].includes(day)||([2,4,6].includes(day)&&h<1);if([2,4,6].includes(day)&&h<1)d.setUTCDate(d.getUTCDate()-1);return {active,id:active?d.toISOString().slice(0,10):null}}
+const crossRecords={new:[],old:[]};
+function crossEventEndMs(id){return /^\d{4}-\d{2}-\d{2}$/.test(String(id||''))?Date.parse(id+'T00:00:00+09:00')+25*3600000:NaN;}
+function visibleRecords(m){const act=jstCrossActivity();return [...records[m],...(act.active?crossRecords[m].filter(b=>b.activityId===act.id&&Number.isFinite(Date.parse(b.time))&&Date.parse(b.time)<crossEventEndMs(act.id)):[])];}
 function render(){
  const now=Date.now();
  document.getElementById('clock').textContent='🇨🇳 北京 '+clockFmt.format(now);
  const merged=mode==='merge';
  const items=(merged
-  ? ['new','old'].flatMap(m=>records[m].map(b=>({...b,_mode:m})))
-  : records[mode].map(b=>({...b,_mode:mode})))
+  ? ['new','old'].flatMap(m=>visibleRecords(m).map(b=>({...b,_mode:m})))
+  : visibleRecords(mode).map(b=>({...b,_mode:mode})))
   .sort((a,b)=>{const ta=timeVal(a.time),tb=timeVal(b.time);return (Number.isFinite(ta)?ta:Infinity)-(Number.isFinite(tb)?tb:Infinity)});
  const upcoming=items.find(b=>Number.isFinite(timeVal(b.time))&&timeVal(b.time)>=now);
  const upcomingKey=upcoming ? upcoming._mode+'|'+(upcoming.id||upcoming.name)+'|'+upcoming.time : null;
@@ -147,14 +151,14 @@ function render(){
   }
   return `<tr class="${mandatory?'required ':''}${merged?'merge-'+b._mode:''}${isPast?' boss-past':''}">
    <td class="muted">${safe(b.zone||c?.zone||'')}</td>
-   <td class="name ${isNext?'boss-next':''}">${safe(b.name)}</td>
+   <td class="name ${isNext?'boss-next':''}">${b.scope==='cross'?'<span style="color:#c4b5fd">🟣 跨服</span> ': '<span style="color:#9ca3af">本服</span> '}${safe(b.name)}</td>
    ${merged?'<td><span class="server-tag '+b._mode+'">'+(b._mode==='new'?'🆕 新区':'🕰️ 老区')+'</span></td>':''}
    <td>${Number.isFinite(t)?fmt.format(t).replace(/\//g,'-'):'-'}</td>
    <td class="count">${count}</td>
    <td><span class="${mandatory?'percent':''}">${safe(status)} · ${safe(prob)}%</span>${mandatory?'<span class="must">必刷</span>':''}</td>
    </tr>`;
  }).join('')||`<tr><td colspan="${merged?6:5}">暂无云端 Boss 数据</td></tr>`;
- document.getElementById('summary').textContent=(merged?'新区＋老区合并':mode==='new'?'新区':'老区')+' · '+items.length+' 条 Boss · 🔵 蓝色名称为下一个即将刷新 · 灰色为已过期 · 🔴 100% 必刷 · 每60秒读取云端 · 只读';
+ document.getElementById('summary').textContent=(merged?'新区＋老区合并':mode==='new'?'新区':'老区')+' · '+items.length+' 条 Boss · 🔵 蓝色名称为下一个即将刷新 · 灰色为已过期 · 🔴 100% 必刷 · 每60秒读取云端 · 跨服活动 JST 周二／四／六01:00自动退出 · 只读';
 }
 document.getElementById('volume').addEventListener('input',()=>{updateSettingView();saveSettings()});document.getElementById('advance').addEventListener('change',saveSettings);settingsInit();loadBoth();setInterval(()=>{render();checkAlerts()},1000);setInterval(loadBoth,60000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)loadBoth()});
 </script></body></html>

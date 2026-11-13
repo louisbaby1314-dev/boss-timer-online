@@ -635,6 +635,7 @@ tbody tr:last-child td { border-bottom: none; }
 <div class="toolbar">
     <span class="badge-count">📋 <span id="bossCount">0</span></span>
     <button class="btn btn-primary" onclick="openAddModal()">＋ 新增</button>
+    <button class="btn btn-info" onclick="ocrOpen()">📷 截图识别并更新</button>
     <button class="btn btn-outline" onclick="undoLast()" id="undoBtn" title="撤销上一步操作（批量解析/编辑/击杀/删除等）">↩️ 撤销</button>
     <button class="btn btn-warning" onclick="delayAllPastUnupdated()" title="已过未更新的 Boss 顺延一个刷新周期">⟳ 顺延已过</button>
     <button class="btn btn-info" onclick="openMergeView()">📊 合并查看</button>
@@ -740,6 +741,23 @@ tbody tr:last-child td { border-bottom: none; }
   </div>
   <div id="catZonePane" style="display:none"><div class="cat-zone-add"><input id="catNewZone" placeholder="输入新地区名称"/><button class="btn btn-primary" onclick="addCatalogZone()">＋ 新增地区</button></div><div id="catZoneRows"></div><p style="font-size:12px;color:#8b93a3;margin-top:10px">有 Boss 或计时记录使用的地区不能直接删除；地区改名会同步修改已有记录。</p></div>
   <div class="modal-footer"><button class="btn btn-outline" onclick="closeCatalog()">关闭</button></div>
+</div></div>
+
+
+<!-- V4 Local OCR import, no screenshot upload -->
+<div class="modal-overlay" id="ocrOverlay" style="z-index:3200"><div class="modal" style="max-width:980px;width:96%;max-height:92vh;overflow:auto">
+  <h3>📷 本地 OCR · 核对后直接更新云端</h3>
+  <p style="font-size:12px;color:#aab4c6">支持 Ctrl+V、拖入或选择截图。图片只在浏览器内识别；仅提交你勾选的 Boss 时间，不提交图片。</p>
+  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    <input type="file" id="ocrFile" accept="image/*" style="max-width:260px"/>
+    <button class="btn btn-primary" onclick="ocrRun()" id="ocrRunBtn">🔍 开始识别</button>
+    <button class="btn btn-outline" onclick="ocrClose()">关闭</button>
+    <span id="ocrStatus" style="font-size:12px;color:#cbd5e1">等待截图</span>
+  </div>
+  <img id="ocrPreview" alt="截图预览" style="display:none;max-width:100%;max-height:210px;margin-top:10px;border-radius:8px"/>
+  <div style="overflow-x:auto;margin-top:12px"><table style="width:100%;min-width:760px"><thead><tr><th>更新</th><th>Boss</th><th>击退</th><th>刷新</th><th>本服／跨服</th><th>校验</th></tr></thead><tbody id="ocrRows"><tr><td colspan="6">先选择或粘贴图片</td></tr></tbody></table></div>
+  <div style="font-size:12px;color:#fbbf24;margin-top:12px" id="ocrNotice">默认不勾选未入库、间隔异常、徽章判断不确定的记录。跨服活动以日本时间为准。</div>
+  <div class="modal-footer"><button class="btn btn-outline" onclick="ocrClose()">取消</button><button class="btn btn-primary" onclick="ocrSubmit()" id="ocrSubmitBtn">✅ 确认并更新到 D1</button></div>
 </div></div>
 
 <!-- 批量确认弹窗 -->
@@ -1199,6 +1217,7 @@ tbody tr:last-child td { border-bottom: none; }
                 const parsed = JSON.parse(stored);
                 if (parsed.bosses && Array.isArray(parsed.bosses) && parsed.bosses.length > 0) {
                     bosses = parsed.bosses.map(b => ({ ...b, prob: getDefaultProb(b.name), zone: b.zone || getZone(b.name) }));
+                    crossBosses = Array.isArray(parsed._crossBosses)?parsed._crossBosses:[];cleanCross();
                     remindedBosses = new Set(parsed._remindedBosses || []);
                     stoppedFlashing = new Set(parsed._stoppedFlashing || []);
                     remindedOther = new Set(parsed._remindedOther || []);
@@ -1216,6 +1235,7 @@ tbody tr:last-child td { border-bottom: none; }
         createSnapshot();
         const dataToSave = {
             bosses: bosses,
+            _crossBosses: crossBosses,
             _remindedBosses: Array.from(remindedBosses),
             _stoppedFlashing: Array.from(stoppedFlashing),
             _remindedOther: Array.from(remindedOther),
@@ -1281,6 +1301,7 @@ tbody tr:last-child td { border-bottom: none; }
         modeLabel.style.color = newMode === 'new' ? '#60a5fa' : '#fbbf24';
         appEl.className = 'app mode-' + newMode;
 
+        crossBosses=[];
         if (!loadData()) {
             bosses = DEFAULT_BOSSES.map(b => ({ ...b, id: b.id || 'b' + Date.now() + Math.random() }));
             saveData();
@@ -1318,7 +1339,7 @@ tbody tr:last-child td { border-bottom: none; }
         if (!uploadEnabled || !adminAuthenticated) return showToast('⚠️ 请先启用上传模式并登录管理员');
         cloudStatus.textContent='⏳ 同步中...';cloudStatus.className='cloud-status syncing';
         try {
-            const data={bosses:bosses,_catalog:{version:2,zones:ZONE_OPTIONS,bosses:DEFAULT_BOSSES},
+            const data={bosses:bosses,_crossBosses:crossBosses,_catalog:{version:2,zones:ZONE_OPTIONS,bosses:DEFAULT_BOSSES},
                 _remindedBosses:Array.from(remindedBosses),_stoppedFlashing:Array.from(stoppedFlashing),
                 mode:mode,updatedAt:new Date().toISOString()};
             const response=await fetch('/api/boss?mode='+encodeURIComponent(mode),{
@@ -1345,6 +1366,7 @@ tbody tr:last-child td { border-bottom: none; }
                 pushUndo('从云端下载');
                 if(record._catalog) applyCatalog(record._catalog);
                 bosses=record.bosses.map(b=>({...b,prob:getDefaultProb(b.name),zone:b.zone||getZone(b.name)}));
+                crossBosses=record._crossBosses||[];cleanCross();
                 remindedBosses=new Set(record._remindedBosses||[]);
                 stoppedFlashing=new Set(record._stoppedFlashing||[]);
                 saveData();renderTable();
@@ -1386,7 +1408,8 @@ tbody tr:last-child td { border-bottom: none; }
                 // 不再无条件 cancel()：多 Boss 排队时会把上一条播报打断（只听到开头"老/新"就断掉）
                 // 改为用 utterance.onend 播完一条再播下一条，保证完整播报
                 const prefix = (alertMode || mode) === 'new' ? '新区 ' : '老区 ';
-                const utterance = new SpeechSynthesisUtterance(prefix + bossName + '，即将刷新！');
+                const crossPrefix = String(bossName).startsWith('跨服 ' ) ? '' : '本服 ';
+                const utterance = new SpeechSynthesisUtterance(prefix + crossPrefix + bossName + '，即将刷新！');
                 utterance.lang = 'zh-CN';
                 utterance.rate = 0.85;
                 utterance.pitch = 1.1;
@@ -1418,6 +1441,7 @@ tbody tr:last-child td { border-bottom: none; }
     // 当前区 + 另一区 的 Boss 全量（另一区实时读 localStorage，保证数据最新）
     function getAllRemindableBosses() {
         const list = bosses.map(b => ({ ...b, _mode: mode }));
+        visibleCrossBosses().forEach(b=>list.push({...b,_mode:mode,_cross:true}));
         const otherMode = mode === 'new' ? 'old' : 'new';
         try {
             const raw = localStorage.getItem('bossData_integrated_' + otherMode);
@@ -1425,6 +1449,7 @@ tbody tr:last-child td { border-bottom: none; }
                 const p = JSON.parse(raw);
                 if (p && Array.isArray(p.bosses)) {
                     p.bosses.forEach(b => list.push({ ...b, _mode: otherMode }));
+                    (p._crossBosses||[]).filter(crossVisible).forEach(b=>list.push({...b,_mode:otherMode,_cross:true}));
                 }
             }
         } catch (e) { /* ignore */ }
@@ -1436,15 +1461,18 @@ tbody tr:last-child td { border-bottom: none; }
         isSpeaking = true;
         const item = speakQueue.shift();
         const isCur = item.mode === mode;
-        const marked = isCur ? remindedBosses.has(item.id) : remindedOther.has(item.key);
+        const marked = isCur && !item.cross ? remindedBosses.has(item.id) : remindedOther.has(item.key);
         if (!item.name || marked) {
             if (speakQueue.length > 0) setTimeout(processSpeakQueue, 500);
             else isSpeaking = false;
             return;
         }
+        if(item.cross && (!jstCrossActivity().active || (item.time && Date.parse(item.time)>=crossEventEndMs(jstCrossActivity().id)))){
+            if(speakQueue.length>0)setTimeout(processSpeakQueue,100);else isSpeaking=false;return;
+        }
         speakBossAlert(item.name, item.mode);
         showDueGlass(item.name, item.mode);
-        if (isCur) remindedBosses.add(item.id);
+        if (isCur && !item.cross) remindedBosses.add(item.id);
         else remindedOther.add(item.key);
         // 多标签页防重：广播「已播报」标记，其他同时打开的页面收到后同步标记，避免重复播报
         try {
@@ -1487,7 +1515,7 @@ tbody tr:last-child td { border-bottom: none; }
             const target = new Date(b.time);
             const diffMs = target - now;
             const key = b._mode + '|' + b.id;
-            const marked = b._mode === mode ? remindedBosses.has(b.id) : remindedOther.has(key);
+            const marked = b._cross || b._mode !== mode ? remindedOther.has(key) : remindedBosses.has(b.id);
             if (marked || diffMs < 0) continue;
             // 到点前提前量内触发；到点后 60 秒内仍可触发（防止 1 秒检查周期相位错开漏掉，靠已播报标记防重）
             if (diffMs <= remindMs && diffMs > -60000) {
@@ -1501,9 +1529,9 @@ tbody tr:last-child td { border-bottom: none; }
         for (const item of dueBosses) {
             const alreadyQueued = speakQueue.some(q => q.key === item.key);
             const isCur = item.boss._mode === mode;
-            const alreadyMarked = isCur ? remindedBosses.has(item.boss.id) : remindedOther.has(item.key);
+            const alreadyMarked = isCur && !item.boss._cross ? remindedBosses.has(item.boss.id) : remindedOther.has(item.key);
             if (!alreadyQueued && !alreadyMarked) {
-                speakQueue.push({ key: item.key, id: item.boss.id, name: item.boss.name, mode: item.boss._mode });
+                speakQueue.push({ key: item.key, id: item.boss.id, name: item.boss._cross?'跨服 '+item.boss.name:item.boss.name, mode: item.boss._mode, cross:!!item.boss._cross, time:item.boss.time });
             }
         }
 
@@ -1617,7 +1645,7 @@ tbody tr:last-child td { border-bottom: none; }
             html += `
                 <tr ${rowStyle}>
                     <td class="boss-zone">${getZone(b.name)}</td>
-                    <td class="boss-name ${soonBlue ? 'boss-soon' : ''}" data-boss-id="${b.id}" onclick="stopFlashing('${b.id}')" title="${shouldFlash ? flashText : ''}">${nameHtml}</td>
+                    <td class="boss-name ${soonBlue ? 'boss-soon' : ''}" data-boss-id="${b.id}" onclick="stopFlashing('${b.id}')" title="${shouldFlash ? flashText : ''}">本服 · ${nameHtml}</td>
                     <td>
                         <div class="actions">
                             <button class="btn-sm kill" onclick="recordKill('${b.id}')" title="记录击杀">⚔️</button>
@@ -1626,7 +1654,6 @@ tbody tr:last-child td { border-bottom: none; }
                                 <button class="btn-sm row-more-btn" onclick="toggleRowMenu('${b.id}', event)" title="更多操作">⋯</button>
                                 <div class="row-menu" id="rowMenu_${b.id}">
                                     <button class="row-menu-item" onclick="editBoss('${b.id}')">✎ 编辑</button>
-                                    <button class="row-menu-item" onclick="clearBossTime('${b.id}')">↺ 清除刷新时间</button>
                                     ${remindRowHtml}
                                     <button class="row-menu-item danger" onclick="delBoss('${b.id}')">🗑 删除</button>
                                 </div>
@@ -1640,8 +1667,13 @@ tbody tr:last-child td { border-bottom: none; }
             `;
         }
 
+        cleanCross();
+        if(jstCrossActivity().active){for(const b of visibleCrossBosses()){const t=Date.parse(b.time),diff=t-Date.now();
+            let count='—';if(Number.isFinite(t))count=diff<0?'已过':`${Math.floor(diff/3600000)}h ${String(Math.floor(diff%3600000/60000)).padStart(2,'0')}m ${String(Math.floor(diff%60000/1000)).padStart(2,'0')}s`;
+            html+=`<tr class="cross-row" style="background:rgba(139,92,246,.07)"><td>${htmlEscape(b.zone||'')}</td><td><span style="color:#c4b5fd;font-weight:700">🟣 跨服</span> ${htmlEscape(b.name)}</td><td>—</td><td>${htmlEscape(formatTimeByZone(b.time))}</td><td>${htmlEscape(count)}</td><td>入侵活动</td></tr>`;
+        }}
         tbody.innerHTML = html;
-        bossCountSpan.textContent = sorted.length;
+        bossCountSpan.textContent = sorted.length+visibleCrossBosses().length;
     }
 
     function updateCountdownOnly() {
@@ -1707,6 +1739,7 @@ tbody tr:last-child td { border-bottom: none; }
         const now = new Date();
         const pad = n => n.toString().padStart(2, '0');
         timeDisplay.textContent = new Intl.DateTimeFormat('zh-CN',{timeZone:timezone === 'japan'?'Asia/Tokyo':'Asia/Shanghai',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(now);
+        cleanCross();
         if (reminderEnabled) checkAndSpeak();
         updateCountdownOnly();
         if (document.getElementById('mergeModalOverlay').style.display === 'flex') updateMergeCountdown();
@@ -1739,22 +1772,29 @@ tbody tr:last-child td { border-bottom: none; }
         showToast(`⟳ ${b.name} 已顺延 ${b.interval}h`);
     }
 
-    function delayAllPastUnupdated() {
+    async function delayAllPastUnupdated() {
         const now = new Date();
         const updatedNames = new Set(batchUpdatedNames || []);
-        let delayList = [];
-
-        for (const b of bosses) {
-            if (!b.time) continue;
-            if (new Date(b.time) < now && !updatedNames.has(b.name) && b.interval > 0) {
-                delayList.push(b);
-            }
+        const delayList = bosses.filter(b => b.time && new Date(b.time) < now && !updatedNames.has(b.name) && b.interval > 0);
+        // Same current zone. Cross-server records use a different D1 storage path.
+        const crossDelayList = jstCrossActivity().active ? crossBosses.filter(b =>
+            crossVisible(b) && Date.parse(b.time) < now.getTime() && Number(b.interval) > 0) : [];
+        if (!delayList.length && !crossDelayList.length) return showToast('✅ 没有需要顺延的已过Boss');
+        if (!confirm(`发现本服 ${delayList.length} 只、跨服 ${crossDelayList.length} 只已过 Boss，确定顺延吗？\n跨服顺延超过次日日本时间01:00的记录将不再显示。`)) return;
+        let crossUpdated=0, crossHidden=0;
+        if(crossDelayList.length){
+            try{
+                const res=await fetch('/api/boss?action=cross-delay&mode='+encodeURIComponent(mode),{
+                    method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'});
+                const payload=await res.json();
+                if(!res.ok||!payload.ok)throw new Error(payload.error||'HTTP '+res.status);
+                crossBosses=payload.data._crossBosses||[];
+                crossUpdated=payload.updated||0;
+                crossHidden=payload.hidden||0;
+            }catch(e){return showToast('跨服顺延失败，本次没有修改本服：'+e.message);}
         }
-
-        if (delayList.length === 0) return showToast('✅ 没有需要顺延的已过Boss');
-
-        if (confirm(`发现 ${delayList.length} 个已过 Boss，确定全部顺延吗？`)) {
-            pushUndo('批量顺延 ' + delayList.length + ' 个 Boss');
+        if(delayList.length){
+            pushUndo('批量顺延本服 '+delayList.length+' 个 Boss');
             for (const b of delayList) {
                 remindedBosses.delete(b.id);
                 stoppedFlashing.delete(b.id);
@@ -1763,101 +1803,98 @@ tbody tr:last-child td { border-bottom: none; }
                 b.time = next.toISOString();
             }
             saveData();
-            renderTable();
-            showToast(`⟳ 已顺延 ${delayList.length} 个Boss`);
         }
+        renderTable();
+        showToast(`⟳ 已顺延本服 ${delayList.length} 只、跨服 ${crossUpdated} 只${crossHidden?'（其中 '+crossHidden+' 只超出活动结束时间，已隐藏）':''}`);
     }
 
     // ★ 智能解析：兼容「截图 OCR 分块文本」与「一行一条记录」两种格式 ★
     // 支持：名称行与时间行分离 / 击退+出没同行或拆行 / 时间带空格(22时 28分) / 仅击退时间(自动按间隔算下次)
     // ===== 文本解析（公共：手动粘贴解析 与 屏幕识别 共用）=====
-    // 2026-11 OCR 容错：按已配置 Boss 名称及刷新间隔核对；不猜测不认识的名字。
-    // 只处理微信/PixPin 的分行、分列格式；原有「名称+时间同一行」走原解析器。
     function parseWechatOcrText(text, silent) {
-        const rawLines = String(text || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+        const lines = String(text || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
         const dateRe = /(20\d{2})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日\s*(\d{1,2})\s*时\s*(\d{1,2})\s*分/g;
-        const known = new Map();
-        for (const item of DEFAULT_BOSSES) known.set(item.name.replace(/\s/g, ''), item);
-        for (const item of bosses) known.set(item.name.replace(/\s/g, ''), item);
-        const tokens = [], unknown = [];
-        let nameCount=0, timeCount=0, participants=0, extra=0, mixedLine=false;
-        for (const line of rawLines) {
-            // 微信人数、掉落数量、OCR 独立符号均不是 Boss 或日期。
-            if (/^参与\s*[（(]?\s*\d+\s*[）)]?$/.test(line)) {participants++; continue;}
-            if (/^[\d\s.,，、：:;；()（）%％+\-]+$/.test(line) || /^[A-Za-zI|丨母]+$/.test(line)) {extra++; continue;}
-            const dates = [...line.matchAll(dateRe)];
-            const remains=line.replace(dateRe, '').replace(/[\s，,、；;:：\-—()（）]/g,'');
-            if (dates.length && remains) {mixedLine=true; break;}
-            if (dates.length) {
-                for(const m of dates) {
-                    const [year,month,day,hour,minute]=m.slice(1).map(Number);
-                    const stamp=Date.UTC(year,month-1,day,hour,minute);
-                    const valid=new Date(stamp);
-                    if(valid.getUTCFullYear()!==year||valid.getUTCMonth()!==month-1||valid.getUTCDate()!==day||valid.getUTCHours()!==hour||valid.getUTCMinutes()!==minute)
-                        return {error:'日期时间无效，请核对 OCR 结果'};
-                    tokens.push({type:'time',time:stamp-(timezone==='japan'?9:8)*3600000});timeCount++;
+        const names = [], times = [];
+        let other = 0, participants = 0, dateLines = 0;
+        for (const line of lines) {
+            if (/^参与\s*[（(]\s*\d+\s*[）)]$/.test(line)) { participants++; continue; }
+            // 允许已知 Boss 名中被 OCR 插入空格；不做模糊猜测。
+            const stripped = line.replace(/\s/g, '');
+            if (DEFAULT_BOSSES.some(x => x.name === stripped)) { names.push(stripped); continue; }
+            const matches = [...line.matchAll(dateRe)];
+            if (matches.length) {
+                dateLines++;
+                const residue = line.replace(dateRe, '').replace(/[\s，,、；;]/g,'');
+                if (residue) { other++; continue; }
+                for (const m of matches) {
+                    const year=Number(m[1]),month=Number(m[2]),day=Number(m[3]),hour=Number(m[4]),minute=Number(m[5]);
+                    const utc = Date.UTC(year,month-1,day,hour,minute);
+                    const d = new Date(utc);
+                    if (d.getUTCFullYear()!==year || d.getUTCMonth()!==month-1 || d.getUTCDate()!==day || d.getUTCHours()!==hour || d.getUTCMinutes()!==minute) return {error:'发现无效日期或时间，请检查微信识别文字'};
+                    times.push(utc-(timezone==='japan'?9:8)*3600000);
                 }
-                continue;
-            }
-            const norm=line.replace(/\s/g,'');
-            if(known.has(norm)) {tokens.push({type:'name',name:known.get(norm).name});nameCount++;continue;}
-            unknown.push(line);
+            } else other++;
         }
-        if (mixedLine || nameCount===0 || timeCount===0) return null;
-        // 不认识的中文文本可能是漏识别的 Boss；不允许悄悄错位。
-        if (unknown.length) return {error:'发现无法确认的内容：'+unknown.slice(0,3).join('、')+'；请核对 Boss 名称'};
-        const names=tokens.filter(t=>t.type==='name').map(t=>t.name);
-        const times=tokens.filter(t=>t.type==='time').map(t=>t.time);
-        if(timeCount<nameCount || timeCount>nameCount*2)
-            return {error:`Boss ${nameCount} 只、时间 ${timeCount} 条，数量无法安全配对`};
-        // 分列截图：名字集中在前 / 两组时间在后。或交错截图：名字与时间分散。
-        // 两种情况按原始名字顺序及时间顺序匹配，仅认可配置间隔吻合的两时间配对。
-        const memo=new Map();
-        function solve(i,j) {
-            const key=i+','+j;if(memo.has(key)) return memo.get(key);
-            if(i===names.length) return j===times.length?{score:0,ways:1,rows:[]}:null;
-            if(j>=times.length) return null;
-            const cfg=known.get(names[i].replace(/\s/g,''));
-            if(!cfg || !(Number(cfg.interval)>0)) return null;
+        // 没有完整的分列结构时交由旧解析器；像此类分列结构解析失败时宁可拒绝更新。
+        const columnar = participants>0 || (names.length>1 && dateLines>0 && lines.findIndex(l=>l.replace(/\s/g,'')===names[0])<lines.findIndex(l=>/(20\d{2})\s*年/.test(l)));
+        dateRe.lastIndex=0;
+        if (!columnar) return null;
+        if (!names.length || !times.length || other) return {error:`文本中有 ${other} 行无法识别，或缺少完整名称/日期；请先核对微信提取文字`};
+        if (participants && participants!==names.length) return {error:`Boss ${names.length} 个，但参与人数 ${participants} 项，请核对是否有遗漏行`};
+        if (times.length < names.length || times.length > names.length*2) return {error:`Boss ${names.length} 个，日期 ${times.length} 个，无法可靠对应`};
+        // 从前到后动态规划。每个 Boss 必须消耗一个击退时间，第二个时间仅在刷新间隔严格吻合时视作出没时间。
+        const memo = new Map();
+        function resolve(i,j) {
+            const key=i+','+j;
+            if (memo.has(key)) return memo.get(key);
+            if (i===names.length) return j===times.length ? {score:0,rows:[],ways:1} : null;
+            if (j>=times.length) return null;
+            const def=DEFAULT_BOSSES.find(b=>b.name===names[i]);
+            const remain=names.length-i-1;
             let best=null;
-            for(const take of [2,1]) {
-                if(j+take>times.length) continue;
-                const remaining=names.length-i-1;
-                if(times.length-j-take<remaining||times.length-j-take>remaining*2) continue;
-                if(take===2) {
-                    const delta=(times[j+1]-times[j])/3600000;
-                    if(Math.abs(delta-Number(cfg.interval))>0.035) continue;
+            for (const span of [1,2]) {
+                if (span===2) {
+                    if(j+1>=times.length) continue;
+                    const hours=(times[j+1]-times[j])/3600000;
+                    if (Math.abs(hours-def.interval)>0.035) continue; // 允许最多约两分钟偏差
                 }
-                const rest=solve(i+1,j+take);if(!rest) continue;
-                // 更倾向原图里明确的完整两时间记录；其余单时间按预设补齐。
-                const value=(take===2?100:0)+rest.score;
-                const row={name:names[i],kill:times[j],spawn:take===2?times[j+1]:null};
-                const candidate={score:value,ways:rest.ways,rows:[row,...rest.rows]};
-                if(!best||candidate.score>best.score) best=candidate;
-                else if(candidate.score===best.score) best.ways=Math.min(999,best.ways+candidate.ways);
+                if (times.length-(j+span)<remain || times.length-(j+span)>remain*2) continue;
+                // 截图列表一般按照击退时间从新到旧排列。违反时保持可用，但提示复核。
+                const following=resolve(i+1,j+span);
+                if(!following) continue;
+                const current={name:names[i],kill:times[j],spawn:span===2?times[j+1]:null};
+                let score=following.score+(span===2?10:0);
+                if(following.rows.length && current.kill<following.rows[0].kill) score-=15;
+                if(!best || score>best.score) best={score,rows:[current,...following.rows],ways:following.ways};
+                else if(score===best.score) best.ways=Math.min(999,best.ways+following.ways);
             }
-            memo.set(key,best);return best;
+            memo.set(key,best); return best;
         }
-        const solved=solve(0,0);
-        if(!solved) return {error:'Boss 与时间无法按刷新间隔安全配对；请检查是否漏了一行日期'};
-        const ambiguity=solved.ways>1;
-        let results=solved.rows.map((r,idx)=>{
-            const cfg=known.get(r.name.replace(/\s/g,''));
-            const old=bosses.find(b=>b.name===r.name);
-            const next=r.spawn??r.kill+Number(cfg.interval)*3600000;
-            return {name:r.name,killAt:r.kill,nextTime:new Date(next).toISOString(),interval:Number(cfg.interval),prob:Number(cfg.prob??50),
-                isNew:!old,hasSpawn:r.spawn!==null,knownInterval:Number(cfg.interval),presetInterval:Number(cfg.interval),mismatch:false,
-                olderThanLocal:!!(old?.time && new Date(old.time).getTime()>next),ambiguous:ambiguity,
-                warnings:ambiguity?['多种时间配对方式均符合间隔，请人工核对']:[],ocrRow:idx+1};
+        const solution=resolve(0,0);
+        if(!solution) return {error:'日期无法按 Boss 顺序和预设刷新间隔匹配，已阻止可能的错位更新'};
+        const ambiguous = solution.ways > 1;
+        let results=solution.rows.map((r,i)=>{
+            const cfg=DEFAULT_BOSSES.find(x=>x.name===r.name);
+            const existing=bosses.find(x=>x.name===r.name);
+            const next=r.spawn??r.kill+cfg.interval*3600000;
+            return {name:r.name,killAt:r.kill,nextTime:new Date(next).toISOString(),interval:cfg.interval,prob:cfg.prob,
+                hasSpawn:r.spawn!=null,isNew:!existing,knownInterval:cfg.interval,presetInterval:cfg.interval,
+                mismatch:false,olderThanLocal:!!(existing?.time && new Date(existing.time).getTime()>next),fromWechat:true,ocrRow:i+1,
+                ambiguous:ambiguous, warnings:ambiguous?['多个时间归组方案同样合理，需人工确认']:[]};
         });
-        // 同名重复：保留较新的击退时间，但必须人工核对再勾选。
-        const unique=new Map(), duplicates=new Set();
-        for(const r of results){
-            if(unique.has(r.name)){duplicates.add(r.name);if(r.killAt>unique.get(r.name).killAt)unique.set(r.name,r);}
-            else unique.set(r.name,r);
+        // 同名旧截图记录只保留最新击退事件。
+        const distinct=new Map();
+        for(const r of results) {
+            const prev=distinct.get(r.name);
+            if (prev) {
+                r.duplicate=true; prev.duplicate=true;
+                r.warnings.push('截图中出现同名 Boss 多条记录，已只保留最新击退时间');
+            }
+            if(!prev||r.killAt>prev.killAt) distinct.set(r.name,r);
         }
-        results=[...unique.values()];
-        for(const r of results){if(duplicates.has(r.name)){r.duplicate=true;r.warnings.push('同名 Boss 重复，已保留较新击退时间，请确认');}}
+        results=[...distinct.values()];
+        // 重复名字无论采用哪条都需要先人工核对（不自动勾选）。
+        for(const r of results) if(r.duplicate) {r.warnings.push('同名多条数据：请确认所需的击退记录');}
         return {results};
     }
 
@@ -2088,8 +2125,8 @@ tbody tr:last-child td { border-bottom: none; }
         if (r.ambiguous && !issues.some(x=>x.includes('归组'))) issues.push('时间对应关系存在歧义');
         if (r.duplicate && !issues.some(x=>x.includes('同名'))) issues.push('存在同名重复记录');
         if (!r.nextTime || !Number.isFinite(new Date(r.nextTime).getTime())) issues.push('刷新时间无效');
-        if (!r.name || ![...DEFAULT_BOSSES,...bosses].some(x=>x.name===r.name)) issues.push('Boss 名称不在预设列表');
-        if (!r.hasSpawn && !(r.knownInterval>0)) issues.push('没有出没时间且无法计算刷新间隔');
+        if (!r.name || !DEFAULT_BOSSES.some(x=>x.name===r.name)) issues.push('Boss 名称不在预设列表');
+        if (!r.hasSpawn && !(r.presetInterval>0)) issues.push('没有出没时间且无法计算刷新间隔');
         return [...new Set(issues)];
     }
 
@@ -2329,23 +2366,6 @@ tbody tr:last-child td { border-bottom: none; }
             const btn = document.getElementById('undoBtn');
             if (btn) btn.textContent = cnt > 0 ? '↩️ 撤销 (' + cnt + ')' : '↩️ 撤销';
         } catch (e) { /* ignore */ }
-    }
-
-    // 单独重置当前区服的一只 Boss：不删除记录、不影响另一分区。
-    // 仅保存至当前浏览器；管理员点击“上传”后才同步 D1。
-    function clearBossTime(id) {
-        const b = bosses.find(x => x.id === id);
-        if (!b) return showToast('未找到该 Boss，请刷新页面后重试');
-        if (!b.time) return showToast('「' + b.name + '」的刷新时间已经是未设置');
-        const area = mode === 'new' ? '新区' : '老区';
-        if (!confirm('仅清除【' + area + '】「' + b.name + '」的刷新时间？\n其他 Boss 和另一个区服都不会改变。\n清除后请点击“上传”同步到云端。')) return;
-        pushUndo('清除「' + b.name + '」的刷新时间');
-        b.time = '';
-        remindedBosses.delete(b.id);
-        stoppedFlashing.delete(b.id);
-        saveData();
-        renderTable();
-        showToast('✅ 「' + b.name + '」已设为未设置；请点击上传同步云端');
     }
 
     function delBoss(id) {
@@ -2688,6 +2708,123 @@ tbody tr:last-child td { border-bottom: none; }
         if (!e.target.closest('.row-more')) document.querySelectorAll('.row-menu.show').forEach(m => m.classList.remove('show'));
         if (!e.target.closest('.paste-float')) document.getElementById('pasteFloat').classList.remove('open');
     });
+
+
+    // ===== V4 local PaddleOCR and scoped cross-server updates =====
+    let ocrFile=null, ocrEnginePromise=null, ocrRowsData=[],crossBosses=[];
+    const OCR_DATE_RE=/(20\d{2})\s*[年\/-]\s*(\d{1,2})\s*[月\/-]\s*(\d{1,2})\s*[日\sT]+\s*(\d{1,2})\s*[时:：]\s*(\d{1,2})\s*分?/g;
+    const ocrEl=id=>document.getElementById(id);
+    function jstCrossActivity(time=Date.now()){
+        const d=new Date(time+9*3600000),day=d.getUTCDay(),h=d.getUTCHours();
+        const active=[1,3,5].includes(day)||([2,4,6].includes(day)&&h<1);
+        if([2,4,6].includes(day)&&h<1)d.setUTCDate(d.getUTCDate()-1);
+        return {active,id:active?d.toISOString().slice(0,10):null};
+    }
+    // Activity date is JST local calendar date. End is 25 hours after 00:00 JST on event day.
+    function crossEventEndMs(id){return /^\d{4}-\d{2}-\d{2}$/.test(String(id||''))?Date.parse(id+'T00:00:00+09:00')+25*3600000:NaN;}
+    function crossVisible(b){const event=jstCrossActivity(),t=Date.parse(b?.time||'');
+        return event.active&&b?.activityId===event.id&&Number.isFinite(t)&&t<crossEventEndMs(event.id);}
+    function visibleCrossBosses(){return crossBosses.filter(crossVisible);}
+    function cleanCross(){const event=jstCrossActivity();const before=crossBosses.length;
+        crossBosses=event.active?crossBosses.filter(b=>b.activityId===event.id):[];
+        if(before!==crossBosses.length){speakQueue=speakQueue.filter(q=>!q.cross);renderTable();}
+    }
+    function ocrOpen(){ocrEl('ocrOverlay').style.display='flex';ocrEl('ocrStatus').textContent='请选择或粘贴截图';}
+    function ocrClose(){ocrEl('ocrOverlay').style.display='none';}
+    function ocrReceive(f){if(!f||!f.type.startsWith('image/'))return;
+        ocrFile=f;ocrEl('ocrPreview').src=URL.createObjectURL(f);ocrEl('ocrPreview').style.display='block';ocrEl('ocrStatus').textContent='已加载截图，点击开始识别';}
+    function ocrParseTime(str){const m=OCR_DATE_RE.exec(String(str));OCR_DATE_RE.lastIndex=0;if(!m)return '';
+        const iso=`${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}T${m[4].padStart(2,'0')}:${m[5].padStart(2,'0')}:00+08:00`;
+        const t=Date.parse(iso);return Number.isFinite(t)?new Date(t).toISOString():'';}
+    function ocrDisplayTime(iso){return iso?new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(iso)):'—'}
+    function ocrIsName(s){const x=String(s||'').trim();OCR_DATE_RE.lastIndex=0;
+        if(!x||x.length<2||x.length>25||!/[\u3400-\u9fff]/u.test(x)||/\d|参与|人数|刷新|击退|星期|小时|分钟/.test(x))return false;
+        if(ocrParseTime(x))return false;return true;}
+    function ocrNormalize(n){return String(n||'').normalize('NFKC').replace(/[\s·・:：]/g,'').replace(/^入侵的/,'')}
+    function ocrCatalogMatch(name){const n=ocrNormalize(name);const c=DEFAULT_BOSSES.find(b=>ocrNormalize(b.name)===n);return c||null;}
+    function ocrBadgeGuess(img, y, nameX){
+        // Conservative pixel heuristic: icon is in leftmost 5% of original game screenshot, near top of each row.
+        // It is a hint, never a substitute for the operator's explicit cross/local selector.
+        try{const canvas=document.createElement('canvas');canvas.width=img.width;canvas.height=img.height;
+            const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.drawImage(img,0,0);
+            const x0=Math.round(img.width*.016), x1=Math.round(img.width*.058);
+            const top=Math.max(0,Math.round(y-60)), bottom=Math.min(img.height,Math.round(y-10));
+            if(x1<=x0||bottom<=top)return false;
+            const dat=ctx.getImageData(x0,top,x1-x0,bottom-top).data;let purple=0;
+            for(let i=0;i<dat.length;i+=4){const [r,g,b]=[dat[i],dat[i+1],dat[i+2]];
+                if(r>55&&b>75&&b>g*1.20&&r>g*1.16&&Math.abs(b-r)<130)purple++;}
+            return purple/(dat.length/4)>.055;
+        }catch{return false;}
+    }
+    function ocrBuild(items,img){
+        const lines=(items||[]).map(it=>{let p=it.poly||[],x=Number.isFinite(it.x)?it.x:p.reduce((a,v)=>a+v[0],0)/(p.length||1),y=Number.isFinite(it.y)?it.y:p.reduce((a,v)=>a+v[1],0)/(p.length||1);return {text:String(it.text||''),x,y,score:Number(it.score??1)};}).sort((a,b)=>a.y-b.y);
+        const right=img.width*.66;
+        const names=lines.filter(l=>l.x<right*.65&&ocrIsName(l.text)&&l.score>.35).sort((a,b)=>a.y-b.y);
+        const datetimes=lines.filter(l=>l.x>right).map(l=>({...l,time:ocrParseTime(l.text)})).filter(l=>l.time);
+        const rows=[];
+        names.forEach((n,i)=>{if(i>0&&n.y-names[i-1].y<28)return;
+            const low=i?((n.y+names[i-1].y)/2):-Infinity;
+            const high=i<names.length-1?((n.y+names[i+1].y)/2):Infinity;
+            const times=datetimes.filter(d=>d.y>=low&&d.y<high).sort((a,b)=>a.y-b.y);
+            const nameOriginal=n.text.trim(),cfg=ocrCatalogMatch(nameOriginal),name=cfg?.name||nameOriginal;
+            const killed=times[0]?.time||'',rawSpawn=times[1]?.time||'';
+            const hours=Number(cfg?.interval)||0;
+            const computed=(!rawSpawn&&killed&&hours)?new Date(Date.parse(killed)+hours*3600000).toISOString():'';
+            const spawn=rawSpawn||computed;
+            const diff=rawSpawn&&killed?(Date.parse(rawSpawn)-Date.parse(killed))/3600000:NaN;
+            const mismatch=!!rawSpawn&&hours>0&&Math.abs(diff-hours)>1/120;
+            const badge=ocrBadgeGuess(img,n.y,n.x),scope=badge?'cross':'local';
+            const event=jstCrossActivity();
+            const reason=!cfg?'未入库':!killed?'缺少击退时间':!spawn?'无法计算刷新时间':times.length>2?'时间列不明确':mismatch?`间隔不匹配（截图 ${diff.toFixed(2)}h / 配置 ${hours}h）`:scope==='cross'&&!event.active?'当前不在跨服活动时间':computed?'根据刷新间隔自动补齐':'校验通过';
+            const safe=!!cfg&&!!killed&&!!spawn&&!mismatch&&times.length<=2&&(scope!=='cross'||event.active)&&n.score>.8;
+            rows.push({name,raw:nameOriginal,killed,spawn,scope,checked:safe,reason,valid:safe,autoCross:badge});
+        });return rows;
+    }
+    function ocrRenderRows(){ocrEl('ocrRows').innerHTML=ocrRowsData.length?ocrRowsData.map((r,i)=>`<tr>
+       <td><input type="checkbox" data-ocr-check="${i}" ${r.checked?'checked':''}></td>
+       <td>${htmlEscape(r.name)}${r.raw!==r.name?`<div style="font-size:11px;color:#fbbf24">OCR: ${htmlEscape(r.raw)}</div>`:''}</td>
+       <td>${htmlEscape(ocrDisplayTime(r.killed))}</td>
+       <td>${htmlEscape(ocrDisplayTime(r.spawn))}${r.reason.includes('补齐')?'<div style="font-size:11px">计算补齐</div>':''}</td>
+       <td><select data-ocr-scope="${i}" style="background:#232833;color:white;padding:6px"><option value="local" ${r.scope==='local'?'selected':''}>本服</option><option value="cross" ${r.scope==='cross'?'selected':''}>跨服</option></select>${r.autoCross?'<div style="font-size:11px;color:#c4b5fd">检测到紫色标志（请核对）</div>':''}</td>
+       <td style="font-size:12px;color:${r.valid?'#86efac':'#fbbf24'}">${htmlEscape(r.reason)}</td>
+     </tr>`).join(''):'<tr><td colspan="6">没有识别到有效 Boss 行，请核对截图。</td></tr>';}
+    async function ocrRun(){if(!ocrFile){ocrEl('ocrStatus').textContent='请先选择或粘贴截图';return;}
+        const btn=ocrEl('ocrRunBtn');btn.disabled=true;ocrEl('ocrStatus').textContent='正在加载本地 PaddleOCR（首次需要联网）…';
+        try{if(!ocrEnginePromise)ocrEnginePromise=import('https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js@0.4.2/+esm').then(async m=>m.PaddleOCR.create({lang:'ch',ocrVersion:'PP-OCRv5',ortOptions:{backend:'wasm'}}));
+            const engine=await ocrEnginePromise;ocrEl('ocrStatus').textContent='OCR 识别中…';
+            const [result]=await engine.predict(ocrFile);
+            const img=await createImageBitmap(ocrFile);ocrRowsData=ocrBuild(result?.items||[],img);img.close();ocrRenderRows();
+            ocrEl('ocrStatus').textContent=`识别出 ${ocrRowsData.length} 条 Boss · ${ocrRowsData.filter(r=>r.checked).length} 条默认勾选`;}
+        catch(e){ocrEnginePromise=null;ocrEl('ocrStatus').textContent='识别失败：'+String(e?.message||e)}finally{btn.disabled=false;}
+    }
+    async function ocrSubmit(){
+        if(!uploadEnabled||!adminAuthenticated){showToast('请先登录管理员并打开上传模式');return;}
+        const chosen=ocrRowsData.filter(r=>r.checked);
+        if(!chosen.length){showToast('没有勾选任何 Boss');return;}
+        const dubious=chosen.filter(r=>!r.valid);
+        if(dubious.length&&!confirm(`你勾选了 ${dubious.length} 条异常记录，确定提交？`))return;
+        const event=jstCrossActivity();if(chosen.some(r=>r.scope==='cross')&&!event.active){showToast('当前不是跨服活动时间，无法更新跨服');return;}
+        const button=ocrEl('ocrSubmitBtn');button.disabled=true;
+        try{const res=await fetch('/api/boss?action=ocr-apply&mode='+mode,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows:chosen.map(r=>({name:r.name,scope:r.scope,nextTime:r.spawn}))})});
+            const payload=await res.json();if(!res.ok)throw new Error(payload.error||('HTTP '+res.status));
+            // Apply the canonical state returned by D1, preserving catalog / other bosses.
+            if(payload.data?._catalog)applyCatalog(payload.data._catalog);
+            bosses=payload.data.bosses.map(b=>({...b}));crossBosses=payload.data._crossBosses||[];
+            remindedBosses=new Set(payload.data._remindedBosses||[]);stoppedFlashing=new Set(payload.data._stoppedFlashing||[]);
+            saveData();renderTable();ocrClose();showToast(`✅ ${payload.updated} 条已直接更新到云端`);
+        }catch(e){showToast('更新失败：'+e.message)}finally{button.disabled=false;}
+    }
+    ocrEl('ocrFile').addEventListener('change',e=>ocrReceive(e.target.files[0]));
+    document.addEventListener('paste',e=>{if(ocrEl('ocrOverlay').style.display!=='flex')return;
+        const item=[...(e.clipboardData?.items||[])].find(i=>i.type.startsWith('image/'));
+        if(item){e.preventDefault();ocrReceive(item.getAsFile());}
+    });
+    ocrEl('ocrRows').addEventListener('change',e=>{const index=e.target.dataset.ocrCheck??e.target.dataset.ocrScope;
+        if(index===undefined)return;const row=ocrRowsData[Number(index)];if(!row)return;
+        if(e.target.dataset.ocrCheck!==undefined)row.checked=e.target.checked;
+        else {row.scope=e.target.value;row.valid=row.valid&&(row.scope!=='cross'||jstCrossActivity().active);}
+    });
+    window.ocrOpen=ocrOpen;window.ocrClose=ocrClose;window.ocrRun=ocrRun;window.ocrSubmit=ocrSubmit;
 
     function init() {
         loadCatalog();
