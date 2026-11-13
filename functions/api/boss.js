@@ -127,9 +127,29 @@ export async function onRequest({request,env}) {
         // If either mode is unseeded, stop writes rather than clobbering it.
         const row=await env.BOSS_DB.prepare('SELECT mode FROM boss_state WHERE mode=?').bind(mode).first();
         if(!row) return json({error:'D1 mode not imported yet; open /migrate-d1.html first',mode},409);
-        // Regular timer uploads must not overwrite separately maintained cross-server records.
+        // Manual sync: merge current-event staged cross records by Boss name.
+        // Never let stale tabs delete server cross records, revive old events, or overwrite newer timestamps.
         const oldRow=await env.BOSS_DB.prepare('SELECT payload FROM boss_state WHERE mode=?').bind(mode).first();
-        if(oldRow){const old=JSON.parse(oldRow.payload);filterCross(old);data._crossBosses=old._crossBosses;}
+        if(oldRow){
+          const old=JSON.parse(oldRow.payload);filterCross(old);
+          const act=jstActivity();const byName=new Map((old._crossBosses||[]).map(b=>[b.name,b]));
+          const catalog=Array.isArray(old._catalog?.bosses)?old._catalog.bosses:old.bosses;
+          const catalogByName=new Map((catalog||[]).map(b=>[b.name,b]));
+          if(act.active){
+            for(const b of Array.isArray(data._crossBosses)?data._crossBosses:[]){
+              const cfg=catalogByName.get(b?.name);
+              const t=Date.parse(b?.time||'');
+              if(!cfg||b?.activityId!==act.id||!Number.isFinite(t)||t>=crossEventEndMs(act.id)||t<Date.now()-86400000)continue;
+              const prior=byName.get(b.name);
+              if(!prior||Date.parse(prior.time)<t){
+                byName.set(b.name,{id:'cross_'+String(cfg.id||b.name).replace(/[^a-zA-Z0-9_]/g,'').slice(0,60),
+                  name:b.name,time:new Date(t).toISOString(),interval:Number(cfg.interval),prob:Number(cfg.prob)||0,
+                  zone:cfg.zone||'',scope:'cross',activityId:act.id});
+              }
+            }
+          }
+          data._crossBosses=[...byName.values()];
+        }
         filterCross(data);
         await writeD1(env.BOSS_DB,mode,data);
         return json({ok:true,mode,updatedAt:data.updatedAt||null,storage:'d1'});
