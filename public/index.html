@@ -474,7 +474,7 @@ tbody tr:last-child td { border-bottom: none; }
 .row-menu-item.danger { color: #e08f8f; }
 .row-menu-item.disabled { color: #5a6170; cursor: default; }
 
-/* ===== 粘贴解析悬浮球（圆形图标 + 弹出面板） ===== */
+/* ===== 截图识别悬浮球（文字解析框由顶部按钮调用） ===== */
 .paste-float { position: fixed; right: 22px; bottom: 22px; z-index: 90; }
 
 /* ===== 同步云端悬浮球（可拖动） ===== */
@@ -530,6 +530,13 @@ tbody tr:last-child td { border-bottom: none; }
 .paste-pop-actions { display: flex; align-items: center; gap: 8px; padding-top: 8px; }
 .paste-pop .hint { font-size: 11px; color: #8b93a3; white-space: nowrap; }
 
+/* Top toolbar opens the existing text parser as a centered popover, without moving the screenshot floating button. */
+.paste-float.text-mode .paste-pop {
+  position: fixed; left: 50%; top: 50%; right: auto; bottom: auto;
+  transform: translate(-50%,-50%); width: min(92vw, 520px);
+  z-index: 4100; animation: none;
+}
+.paste-float.text-mode .paste-pop textarea { min-height: 120px; max-height: 40vh; }
 /* ===== Boss 到点玻璃框提醒（透明玻璃 + 向上凸起 + 字体放大） ===== */
 .due-glass {
   position: fixed; left: 50%; bottom: 28px;
@@ -635,7 +642,7 @@ tbody tr:last-child td { border-bottom: none; }
 <div class="toolbar">
     <span class="badge-count">📋 <span id="bossCount">0</span></span>
     <button class="btn btn-primary" onclick="openAddModal()">＋ 新增</button>
-    <button class="btn btn-info" onclick="ocrOpen()">📷 截图识别并更新</button>
+    <button class="btn btn-info" onclick="openTextParser(event)">📋 文字识别并解析</button>
     <button class="btn btn-outline" onclick="undoLast()" id="undoBtn" title="撤销上一步操作（批量解析/编辑/击杀/删除等）">↩️ 撤销</button>
     <button class="btn btn-warning" onclick="delayAllPastUnupdated()" title="已过未更新的 Boss 顺延一个刷新周期">⟳ 顺延已过</button>
     <button class="btn btn-info" onclick="openMergeView()">📊 合并查看</button>
@@ -675,7 +682,7 @@ tbody tr:last-child td { border-bottom: none; }
     </div>
 
     <div class="footer-note">
-        ☁️ 在线共享 · ✅ 本地保存 · ⚔️记录击杀 · ⟳顺延 · 🔔 提醒 · 🇯🇵🇨🇳 时区切换 · 📋 微信文字智能解析 · ☁️ 云端同步
+        ☁️ 在线共享 · ✅ 本地保存 · ⚔️记录击杀 · ⟳顺延 · 🔔 提醒 · 🇯🇵🇨🇳 时区切换 · 📷 截图识别 · 📋 文字解析 · ☁️ 云端同步
     </div>
 </div>
 
@@ -684,11 +691,11 @@ tbody tr:last-child td { border-bottom: none; }
     <button class="sync-fab" id="syncFab" onclick="syncFabClick(event)" title="同步到云端">☁️</button>
 </div>
 
-<!-- 粘贴解析悬浮球（圆形图标 / 点击展开 / 点击页面其他位置收起） -->
+<!-- 截图识别悬浮球（点击打开本地 OCR，保留位置记忆和拖动） -->
 <div class="paste-float" id="pasteFloat">
-    <button class="paste-fab" id="pasteFab" onclick="togglePasteFloat(event)" title="粘贴解析">📋</button>
+    <button class="paste-fab" id="pasteFab" onclick="openOcrFromFab(event)" title="截图识别" aria-label="截图识别">📷</button>
     <div class="paste-pop" id="pastePop">
-        <div class="paste-pop-head">📋 微信文字智能解析</div>
+        <div class="paste-pop-head">📋 文字识别并解析</div>
         <textarea id="pasteInput" placeholder="直接粘贴游戏截图 OCR 出的文本（名称和时间可分行），例如：&#10;被污染的克鲁玛&#10;巴实那&#10;2026年09月06日10时47分 2026年09月06日18时47分&#10;2026年09月06日10时30分 2026年09月06日14时30分"></textarea>
         <div class="paste-pop-actions">
             <button class="btn btn-success" onclick="parseAndUpdate()">▶ 解析并更新</button>
@@ -761,7 +768,7 @@ tbody tr:last-child td { border-bottom: none; }
     </aside>
   </div>
   <div style="overflow-x:auto;margin-top:12px"><table style="width:100%;min-width:760px"><thead><tr><th>更新</th><th>Boss</th><th>击退</th><th>刷新</th><th>本服／跨服</th><th>校验</th></tr></thead><tbody id="ocrRows"><tr><td colspan="6">先选择或粘贴图片</td></tr></tbody></table></div>
-  <details id="ocrBadgeDebugPanel" open style="margin-top:12px;background:#111827;border:1px solid #42516b;padding:12px;border-radius:9px;color:#d1d5db;font-size:12px">
+  <details id="ocrBadgeDebugPanel" style="margin-top:12px;background:#111827;border:1px solid #42516b;padding:12px;border-radius:9px;color:#d1d5db;font-size:12px">
     <summary style="cursor:pointer;font-weight:700;color:#c4b5fd">🔎 跨服徽章诊断（不会更新数据）</summary>
     <p style="margin:8px 0">只分析本次截图；显示检测区域、最高匹配度、坐标及判定原因。可以直接复制诊断文字发给我。分数只是模板相似度，不是概率。</p>
     <div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap"><button class="btn btn-outline" type="button" onclick="ocrCopyBadgeDebug()">📋 复制诊断结果</button><span id="ocrBadgeCopyStatus" style="color:#86efac"></span></div>
@@ -2617,7 +2624,7 @@ tbody tr:last-child td { border-bottom: none; }
         try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* ignore */ }
     }
 
-    // ===== 粘贴解析悬浮球：圆形图标可拖动 + 点击展开 / 收起 =====
+    // ===== 截图识别悬浮球：圆形图标可拖动 + 点击启动 OCR =====
     let pasteDragging = false, pasteMoved = false, pasteOffX = 0, pasteOffY = 0;
     function initPasteFabDrag() {
         const pf = document.getElementById('pasteFloat');
@@ -2654,10 +2661,22 @@ tbody tr:last-child td { border-bottom: none; }
             if (pasteDragging) { pasteDragging = false; saveSettings(); }
         });
     }
-    function togglePasteFloat(ev) {
+    // Floating camera opens screenshot OCR. The old text parser is still available from the top toolbar.
+    function openOcrFromFab(ev) {
         if (ev) ev.stopPropagation();
-        if (pasteMoved) { pasteMoved = false; return; } // 拖动结束不算点击
-        document.getElementById('pasteFloat').classList.toggle('open');
+        if (pasteMoved) { pasteMoved = false; return; } // don't open after dragging
+        const pf=document.getElementById('pasteFloat');
+        pf.classList.remove('open','text-mode');
+        ocrOpen();
+    }
+    function openTextParser(ev) {
+        if (ev) ev.stopPropagation();
+        const pf=document.getElementById('pasteFloat');
+        pf.classList.add('open','text-mode');
+        document.getElementById('pasteInput').focus();
+    }
+    function togglePasteFloat(ev) { // legacy compatibility
+        openTextParser(ev);
     }
 
     // ===== 同步云端悬浮球：可拖动 + 位置记忆 + 点击即同步 =====
@@ -2722,7 +2741,7 @@ tbody tr:last-child td { border-bottom: none; }
     document.addEventListener('click', function(e) {
         if (!e.target.closest('.more-wrap')) document.getElementById('moreMenu').classList.remove('show');
         if (!e.target.closest('.row-more')) document.querySelectorAll('.row-menu.show').forEach(m => m.classList.remove('show'));
-        if (!e.target.closest('.paste-float')) document.getElementById('pasteFloat').classList.remove('open');
+        if (!e.target.closest('.paste-float')) document.getElementById('pasteFloat').classList.remove('open','text-mode');
     });
 
 
@@ -2762,7 +2781,7 @@ tbody tr:last-child td { border-bottom: none; }
         ocrEl('ocrRows').innerHTML='<tr><td colspan="6">先选择或粘贴图片</td></tr>';
         ocrEl('ocrStatus').textContent='请选择或粘贴新截图';ocrMessage('');
     }
-    function ocrOpen(){ocrReset();ocrEl('ocrOverlay').style.display='flex';}
+    function ocrOpen(){ocrReset();ocrEl('ocrBadgeDebugPanel').open=false;ocrEl('ocrOverlay').style.display='flex';}
     function ocrClose(){ocrEl('ocrOverlay').style.display='none';ocrReset();}
     function ocrReceive(f){if(!f||!f.type.startsWith('image/'))return;
         ocrEpoch++;
