@@ -754,7 +754,12 @@ tbody tr:last-child td { border-bottom: none; }
     <button class="btn btn-outline" onclick="ocrClose()">关闭</button>
     <span id="ocrStatus" style="font-size:12px;color:#cbd5e1">等待截图</span>
   </div>
-  <img id="ocrPreview" alt="截图预览" style="display:none;max-width:100%;max-height:210px;margin-top:10px;border-radius:8px"/>
+  <div id="ocrPreviewSummaryRow" style="display:flex;flex-wrap:wrap;align-items:flex-start;gap:18px;margin-top:12px">
+    <img id="ocrPreview" alt="截图预览" style="display:none;max-width:min(100%,360px);max-height:210px;object-fit:contain;object-position:left top;border-radius:8px"/>
+    <aside id="ocrCrossSummary" aria-live="polite" style="display:none;flex:1;min-width:220px;max-width:510px;min-height:90px;padding:18px 20px;border:1px solid #58477c;background:linear-gradient(135deg,#21192f,#171b2a);border-radius:12px;align-items:center;justify-content:center">
+      <strong style="font-size:19px;color:#e9d5ff">🟣 本次识别 <span id="ocrCrossCount">0</span> 条跨服 Boss</strong>
+    </aside>
+  </div>
   <div style="overflow-x:auto;margin-top:12px"><table style="width:100%;min-width:760px"><thead><tr><th>更新</th><th>Boss</th><th>击退</th><th>刷新</th><th>本服／跨服</th><th>校验</th></tr></thead><tbody id="ocrRows"><tr><td colspan="6">先选择或粘贴图片</td></tr></tbody></table></div>
   <details id="ocrBadgeDebugPanel" open style="margin-top:12px;background:#111827;border:1px solid #42516b;padding:12px;border-radius:9px;color:#d1d5db;font-size:12px">
     <summary style="cursor:pointer;font-weight:700;color:#c4b5fd">🔎 跨服徽章诊断（不会更新数据）</summary>
@@ -2723,6 +2728,7 @@ tbody tr:last-child td { border-bottom: none; }
 
     // ===== V4 local PaddleOCR and scoped cross-server updates =====
     let ocrFile=null, ocrPreviewUrl=null, ocrEnginePromise=null, ocrRowsData=[],crossBosses=[];
+    let ocrRunning=false, ocrQueued=false, ocrEpoch=0;
     const OCR_BADGE_TEMPLATE='data:image/png;base64,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';
     const OCR_BADGE_TEMPLATE_ALTERNATE='data:image/png;base64,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';
     let ocrBadgeReferenceAlternate=null;
@@ -2748,20 +2754,25 @@ tbody tr:last-child td { border-bottom: none; }
     }
     function ocrMessage(message,good=false){const el=ocrEl('ocrSubmitMessage');el.textContent=message;el.style.display=message?'block':'none';el.style.background=good?'#12372b':'#422b22';el.style.borderColor=good?'#15803d':'#b45309';el.style.color=good?'#bbf7d0':'#fde68a';if(message)el.scrollIntoView({block:'nearest',behavior:'smooth'});}
     function ocrReset(){
-        ocrFile=null;ocrRowsData=[];ocrBadgeDiagnostics=[];ocrBadgeDebugImage=null;
+        ocrEpoch++;ocrQueued=false;ocrFile=null;ocrRowsData=[];ocrBadgeDiagnostics=[];ocrBadgeDebugImage=null;
         ocrEl('ocrBadgeDebugCanvas').style.display='none';ocrEl('ocrBadgeDebugText').textContent='识别完成后显示诊断结果';ocrEl('ocrBadgeCopyStatus').textContent='';
         if(ocrPreviewUrl){URL.revokeObjectURL(ocrPreviewUrl);ocrPreviewUrl=null;}
         ocrEl('ocrFile').value='';ocrEl('ocrPreview').removeAttribute('src');ocrEl('ocrPreview').style.display='none';
+        ocrEl('ocrCrossSummary').style.display='none';ocrEl('ocrCrossCount').textContent='0';
         ocrEl('ocrRows').innerHTML='<tr><td colspan="6">先选择或粘贴图片</td></tr>';
         ocrEl('ocrStatus').textContent='请选择或粘贴新截图';ocrMessage('');
     }
     function ocrOpen(){ocrReset();ocrEl('ocrOverlay').style.display='flex';}
     function ocrClose(){ocrEl('ocrOverlay').style.display='none';ocrReset();}
     function ocrReceive(f){if(!f||!f.type.startsWith('image/'))return;
-        ocrRowsData=[];ocrBadgeDiagnostics=[];ocrBadgeDebugImage=null;ocrEl('ocrBadgeDebugCanvas').style.display='none';ocrEl('ocrBadgeDebugText').textContent='识别完成后显示诊断结果';ocrEl('ocrRows').innerHTML='<tr><td colspan="6">新截图已加载，点击开始识别</td></tr>';ocrMessage('');
+        ocrEpoch++;
+        ocrRowsData=[];ocrBadgeDiagnostics=[];ocrBadgeDebugImage=null;ocrEl('ocrBadgeDebugCanvas').style.display='none';ocrEl('ocrBadgeDebugText').textContent='识别完成后显示诊断结果';ocrEl('ocrRows').innerHTML='<tr><td colspan="6">新截图已加载，自动识别中…</td></tr>';ocrMessage('');
+        ocrEl('ocrCrossSummary').style.display='none';
+        if(ocrRunning)ocrQueued=true;
         if(ocrPreviewUrl)URL.revokeObjectURL(ocrPreviewUrl);
         ocrFile=f;ocrPreviewUrl=URL.createObjectURL(f);
-        ocrEl('ocrPreview').src=ocrPreviewUrl;ocrEl('ocrPreview').style.display='block';ocrEl('ocrStatus').textContent='已加载新截图，点击开始识别';}
+        ocrEl('ocrPreview').src=ocrPreviewUrl;ocrEl('ocrPreview').style.display='block';ocrEl('ocrStatus').textContent='新截图已加载，自动开始识别…';
+        if(!ocrRunning)void ocrRun();}
     function ocrParseTime(str){const m=OCR_DATE_RE.exec(String(str));OCR_DATE_RE.lastIndex=0;if(!m)return '';
         const iso=`${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}T${m[4].padStart(2,'0')}:${m[5].padStart(2,'0')}:00+08:00`;
         const t=Date.parse(iso);return Number.isFinite(t)?new Date(t).toISOString():'';}
@@ -2913,7 +2924,14 @@ tbody tr:last-child td { border-bottom: none; }
         }
         return [...newest.values()].sort((a,b)=>Date.parse(b.killed||'')-Date.parse(a.killed||''));
     }
-    function ocrRenderRows(){ocrEl('ocrRows').innerHTML=ocrRowsData.length?ocrRowsData.map((r,i)=>`<tr>
+    // V4.3.6: count only; always reflect the current manual scope selection.
+    // This is not the number of checked rows or rows sent to D1.
+    function ocrRenderCrossSummary(){
+        const box=ocrEl('ocrCrossSummary');
+        box.style.display='flex';
+        ocrEl('ocrCrossCount').textContent=String(ocrRowsData.filter(r=>r.scope==='cross').length);
+    }
+    function ocrRenderRows(){ocrRenderCrossSummary();ocrEl('ocrRows').innerHTML=ocrRowsData.length?ocrRowsData.map((r,i)=>`<tr>
        <td><input type="checkbox" data-ocr-check="${i}" ${r.checked?'checked':''}></td>
        <td>${htmlEscape(r.name)}${r.raw!==r.name?`<div style="font-size:11px;color:#fbbf24">OCR: ${htmlEscape(r.raw)}</div>`:''}</td>
        <td>${htmlEscape(ocrDisplayTime(r.killed))}</td>
@@ -2921,14 +2939,38 @@ tbody tr:last-child td { border-bottom: none; }
        <td><select data-ocr-scope="${i}" style="background:#232833;color:white;padding:6px"><option value="local" ${r.scope==='local'?'selected':''}>本服</option><option value="cross" ${r.scope==='cross'?'selected':''}>跨服</option></select>${r.autoCross?'<div style="font-size:11px;color:#c4b5fd">检测到紫色标志（请核对）</div>':''}</td>
        <td style="font-size:12px;color:${r.valid?'#86efac':'#fbbf24'}">${htmlEscape(r.reason)}</td>
      </tr>`).join(''):'<tr><td colspan="6">没有识别到有效 Boss 行，请核对截图。</td></tr>';}
-    async function ocrRun(){if(!ocrFile){ocrEl('ocrStatus').textContent='请先选择或粘贴截图';return;}
-        const btn=ocrEl('ocrRunBtn');btn.disabled=true;ocrEl('ocrStatus').textContent='正在加载本地 PaddleOCR（首次需要联网）…';
-        try{if(!ocrEnginePromise)ocrEnginePromise=import('https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js@0.4.2/+esm').then(async m=>m.PaddleOCR.create({lang:'ch',ocrVersion:'PP-OCRv5',ortOptions:{backend:'wasm'}}));
-            const engine=await ocrEnginePromise;ocrEl('ocrStatus').textContent='OCR 识别中…';
-            const [result]=await engine.predict(ocrFile);
-            const img=await createImageBitmap(ocrFile);await Promise.all([getBadgeReference().decode().catch(()=>{}),getBadgeReferenceAlternate().decode().catch(()=>{})]);ocrRowsData=ocrBuild(result?.items||[],img);ocrBadgeDebugImage=await createImageBitmap(ocrFile);img.close();ocrMessage('');ocrRenderRows();ocrRenderBadgeDebug();
-            ocrEl('ocrStatus').textContent=`识别出 ${ocrRowsData.length} 条 Boss · ${ocrRowsData.filter(r=>r.checked).length} 条默认勾选`;}
-        catch(e){ocrEnginePromise=null;ocrEl('ocrStatus').textContent='识别失败：'+String(e?.message||e)}finally{btn.disabled=false;}
+    async function ocrRun(){
+        if(!ocrFile){ocrEl('ocrStatus').textContent='请先选择或粘贴截图';return;}
+        if(ocrRunning){ocrQueued=true;return;}
+        ocrRunning=true;ocrQueued=false;
+        const runFile=ocrFile,runEpoch=ocrEpoch;
+        const btn=ocrEl('ocrRunBtn');btn.disabled=true;
+        ocrEl('ocrStatus').textContent='正在加载本地 PaddleOCR（首次需要联网）…';
+        try{
+            if(!ocrEnginePromise)ocrEnginePromise=import('https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js@0.4.2/+esm').then(async m=>m.PaddleOCR.create({lang:'ch',ocrVersion:'PP-OCRv5',ortOptions:{backend:'wasm'}}));
+            const engine=await ocrEnginePromise;
+            if(ocrFile!==runFile||ocrEpoch!==runEpoch)return; // picture changed while model loaded
+            ocrEl('ocrStatus').textContent='OCR 识别中…';
+            const [result]=await engine.predict(runFile);
+            if(ocrFile!==runFile||ocrEpoch!==runEpoch)return; // ignore old screenshot results
+            const img=await createImageBitmap(runFile);
+            try{
+                await Promise.all([getBadgeReference().decode().catch(()=>{}),getBadgeReferenceAlternate().decode().catch(()=>{})]);
+                if(ocrFile!==runFile||ocrEpoch!==runEpoch)return;
+                const rows=ocrBuild(result?.items||[],img);
+                if(ocrFile!==runFile||ocrEpoch!==runEpoch)return;
+                ocrRowsData=rows;
+                ocrBadgeDebugImage=await createImageBitmap(runFile);
+                if(ocrFile!==runFile||ocrEpoch!==runEpoch)return;
+                ocrMessage('');ocrRenderRows();ocrRenderBadgeDebug();
+                ocrEl('ocrStatus').textContent=`识别出 ${ocrRowsData.length} 条 Boss · ${ocrRowsData.filter(r=>r.checked).length} 条默认勾选`;
+            }finally{img.close();}
+        }catch(e){
+            if(ocrFile===runFile&&ocrEpoch===runEpoch){ocrEnginePromise=null;ocrEl('ocrStatus').textContent='识别失败：'+String(e?.message||e);}
+        }finally{
+            ocrRunning=false;btn.disabled=false;
+            if(ocrQueued&&ocrFile){ocrQueued=false;void ocrRun();}
+        }
     }
     function ocrSubmit(){
         ocrMessage('');
@@ -2969,6 +3011,13 @@ tbody tr:last-child td { border-bottom: none; }
         showToast('✅ 已更新当前'+(currentMode==='new'?'新区':'老区')+'页面：本服 '+localCount+'、跨服 '+crossCount+' 条'+(ignored?'；跳过较旧或未入库 '+ignored+' 条':'')+'。尚未上传 D1，请使用原悬浮上传按钮。');
     }
     ocrEl('ocrFile').addEventListener('change',e=>ocrReceive(e.target.files[0]));
+    ocrEl('ocrOverlay').addEventListener('dragover',e=>{if([...(e.dataTransfer?.types||[])].includes('Files'))e.preventDefault();});
+    ocrEl('ocrOverlay').addEventListener('drop',e=>{
+        if(ocrEl('ocrOverlay').style.display!=='flex')return;
+        e.preventDefault();
+        const file=[...(e.dataTransfer?.files||[])].find(f=>f.type.startsWith('image/'));
+        if(file)ocrReceive(file);
+    });
     document.addEventListener('paste',e=>{if(ocrEl('ocrOverlay').style.display!=='flex')return;
         const item=[...(e.clipboardData?.items||[])].find(i=>i.type.startsWith('image/'));
         if(item){e.preventDefault();ocrReceive(item.getAsFile());}
@@ -2976,7 +3025,7 @@ tbody tr:last-child td { border-bottom: none; }
     ocrEl('ocrRows').addEventListener('change',e=>{const index=e.target.dataset.ocrCheck??e.target.dataset.ocrScope;
         if(index===undefined)return;const row=ocrRowsData[Number(index)];if(!row)return;
         ocrMessage('');
-        if(e.target.dataset.ocrCheck!==undefined)row.checked=e.target.checked;
+        if(e.target.dataset.ocrCheck!==undefined){row.checked=e.target.checked;}
         else {row.scope=e.target.value;
             const act=jstCrossActivity();
             if(row.scope==='cross'&&(!act.active||Date.parse(row.spawn)>=crossEventEndMs(act.id))){row.checked=false;row.reason='当前不在跨服活动时间或超过01:00截止';row.valid=false;}
