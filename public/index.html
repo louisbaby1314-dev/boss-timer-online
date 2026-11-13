@@ -408,7 +408,7 @@ tbody tr:last-child td { border-bottom: none; }
   font-weight: 600;
   box-shadow: 0 10px 30px -6px rgba(0,0,0,.6);
   opacity: 0; transition: all .25s cubic-bezier(.2,.9,.3,1.1);
-  pointer-events: none; z-index: 1000; font-size: 13px;
+  pointer-events: none; z-index: 4000; font-size: 13px;
   white-space: nowrap; max-width: 92vw; overflow: hidden; text-overflow: ellipsis;
   border: 1px solid #2a2f3a;
 }
@@ -746,8 +746,8 @@ tbody tr:last-child td { border-bottom: none; }
 
 <!-- V4 Local OCR import, no screenshot upload -->
 <div class="modal-overlay" id="ocrOverlay" style="z-index:3200"><div class="modal" style="max-width:980px;width:96%;max-height:92vh;overflow:auto">
-  <h3>📷 本地 OCR · 核对后直接更新云端</h3>
-  <p style="font-size:12px;color:#aab4c6">支持 Ctrl+V、拖入或选择截图。图片只在浏览器内识别；仅提交你勾选的 Boss 时间，不提交图片。</p>
+  <h3>📷 本地 OCR · 先更新页面，手动上传</h3>
+  <p style="font-size:12px;color:#aab4c6">支持 Ctrl+V、拖入或选择截图。图片只在浏览器内识别；点击更新只修改当前页面的待上传记录。需要同步好友时，再使用原来的悬浮上传按钮。</p>
   <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
     <input type="file" id="ocrFile" accept="image/*" style="max-width:260px"/>
     <button class="btn btn-primary" onclick="ocrRun()" id="ocrRunBtn">🔍 开始识别</button>
@@ -756,8 +756,9 @@ tbody tr:last-child td { border-bottom: none; }
   </div>
   <img id="ocrPreview" alt="截图预览" style="display:none;max-width:100%;max-height:210px;margin-top:10px;border-radius:8px"/>
   <div style="overflow-x:auto;margin-top:12px"><table style="width:100%;min-width:760px"><thead><tr><th>更新</th><th>Boss</th><th>击退</th><th>刷新</th><th>本服／跨服</th><th>校验</th></tr></thead><tbody id="ocrRows"><tr><td colspan="6">先选择或粘贴图片</td></tr></tbody></table></div>
-  <div style="font-size:12px;color:#fbbf24;margin-top:12px" id="ocrNotice">默认不勾选未入库、间隔异常、徽章判断不确定的记录。跨服活动以日本时间为准。</div>
-  <div class="modal-footer"><button class="btn btn-outline" onclick="ocrClose()">取消</button><button class="btn btn-primary" onclick="ocrSubmit()" id="ocrSubmitBtn">✅ 确认并更新到 D1</button></div>
+  <div style="font-size:12px;color:#fbbf24;margin-top:12px" id="ocrNotice">默认不勾选未入库、间隔异常及非活动时间的跨服记录。识别结束后只更新本地；按原悬浮按钮才会上传 D1。</div>
+  <div id="ocrSubmitMessage" role="alert" aria-live="polite" style="display:none;margin-top:10px;padding:10px 12px;background:#422b22;color:#fde68a;border:1px solid #b45309;border-radius:8px;font-size:13px;white-space:pre-wrap"></div>
+  <div class="modal-footer"><button class="btn btn-outline" onclick="ocrClose()">取消</button><button class="btn btn-primary" onclick="ocrSubmit()" id="ocrSubmitBtn">✅ 更新到当前页面（不上传）</button></div>
 </div></div>
 
 <!-- 批量确认弹窗 -->
@@ -1645,7 +1646,7 @@ tbody tr:last-child td { border-bottom: none; }
             html += `
                 <tr ${rowStyle}>
                     <td class="boss-zone">${getZone(b.name)}</td>
-                    <td class="boss-name ${soonBlue ? 'boss-soon' : ''}" data-boss-id="${b.id}" onclick="stopFlashing('${b.id}')" title="${shouldFlash ? flashText : ''}">本服 · ${nameHtml}</td>
+                    <td class="boss-name ${soonBlue ? 'boss-soon' : ''}" data-boss-id="${b.id}" onclick="stopFlashing('${b.id}')" title="${shouldFlash ? flashText : ''}">${nameHtml}</td>
                     <td>
                         <div class="actions">
                             <button class="btn-sm kill" onclick="recordKill('${b.id}')" title="记录击杀">⚔️</button>
@@ -1670,7 +1671,7 @@ tbody tr:last-child td { border-bottom: none; }
         cleanCross();
         if(jstCrossActivity().active){for(const b of visibleCrossBosses()){const t=Date.parse(b.time),diff=t-Date.now();
             let count='—';if(Number.isFinite(t))count=diff<0?'已过':`${Math.floor(diff/3600000)}h ${String(Math.floor(diff%3600000/60000)).padStart(2,'0')}m ${String(Math.floor(diff%60000/1000)).padStart(2,'0')}s`;
-            html+=`<tr class="cross-row" style="background:rgba(139,92,246,.07)"><td>${htmlEscape(b.zone||'')}</td><td><span style="color:#c4b5fd;font-weight:700">🟣 跨服</span> ${htmlEscape(b.name)}</td><td>—</td><td>${htmlEscape(formatTimeByZone(b.time))}</td><td>${htmlEscape(count)}</td><td>入侵活动</td></tr>`;
+            html+=`<tr class="cross-row" style="background:rgba(139,92,246,.07)"><td>${htmlEscape(b.zone||'')}</td><td>${htmlEscape(b.name)} <span style="color:#c4b5fd;font-weight:700;margin-left:10px;font-size:12px">🟣 跨服</span></td><td>—</td><td>${htmlEscape(formatTimeByZone(b.time))}</td><td>${htmlEscape(count)}</td><td>入侵活动</td></tr>`;
         }}
         tbody.innerHTML = html;
         bossCountSpan.textContent = sorted.length+visibleCrossBosses().length;
@@ -2321,7 +2322,7 @@ tbody tr:last-child td { border-bottom: none; }
     function pushUndo(label) {
         try {
             const stack = JSON.parse(localStorage.getItem('bossData_undo_stack') || '[]');
-            stack.push({ label: label || '上一步操作', mode: mode, time: Date.now(), bosses: JSON.parse(JSON.stringify(bosses)) });
+            stack.push({ label: label || '上一步操作', mode: mode, time: Date.now(), bosses: JSON.parse(JSON.stringify(bosses)), crossBosses: JSON.parse(JSON.stringify(crossBosses)) });
             localStorage.setItem('bossData_undo_stack', JSON.stringify(stack.slice(-10)));
         } catch (e) { /* ignore */ }
         updateUndoState();
@@ -2341,12 +2342,14 @@ tbody tr:last-child td { border-bottom: none; }
             localStorage.setItem('bossData_undo_stack', JSON.stringify(stack));
 
             bosses = snap.bosses;
+            if(Array.isArray(snap.crossBosses))crossBosses=snap.crossBosses;
             remindedBosses.clear();
             stoppedFlashing.clear();
             remindedOther.clear();
             // 直接写存储（不走 saveData，避免把恢复前的状态重新记入历史/撤销栈）
             const dataToSave = {
                 bosses: bosses,
+                _crossBosses: crossBosses,
                 _remindedBosses: [], _stoppedFlashing: [], _remindedOther: [],
                 _timezone: timezone
             };
@@ -2711,7 +2714,10 @@ tbody tr:last-child td { border-bottom: none; }
 
 
     // ===== V4 local PaddleOCR and scoped cross-server updates =====
-    let ocrFile=null, ocrEnginePromise=null, ocrRowsData=[],crossBosses=[];
+    let ocrFile=null, ocrPreviewUrl=null, ocrEnginePromise=null, ocrRowsData=[],crossBosses=[];
+    const OCR_BADGE_TEMPLATE='data:image/png;base64,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';
+    let ocrBadgeReference=null;
+    function getBadgeReference(){if(!ocrBadgeReference){ocrBadgeReference=new Image();ocrBadgeReference.src=OCR_BADGE_TEMPLATE;}return ocrBadgeReference;}
     const OCR_DATE_RE=/(20\d{2})\s*[年\/-]\s*(\d{1,2})\s*[月\/-]\s*(\d{1,2})\s*[日\sT]+\s*(\d{1,2})\s*[时:：]\s*(\d{1,2})\s*分?/g;
     const ocrEl=id=>document.getElementById(id);
     function jstCrossActivity(time=Date.now()){
@@ -2729,10 +2735,21 @@ tbody tr:last-child td { border-bottom: none; }
         crossBosses=event.active?crossBosses.filter(b=>b.activityId===event.id):[];
         if(before!==crossBosses.length){speakQueue=speakQueue.filter(q=>!q.cross);renderTable();}
     }
-    function ocrOpen(){ocrEl('ocrOverlay').style.display='flex';ocrEl('ocrStatus').textContent='请选择或粘贴截图';}
-    function ocrClose(){ocrEl('ocrOverlay').style.display='none';}
+    function ocrMessage(message,good=false){const el=ocrEl('ocrSubmitMessage');el.textContent=message;el.style.display=message?'block':'none';el.style.background=good?'#12372b':'#422b22';el.style.borderColor=good?'#15803d':'#b45309';el.style.color=good?'#bbf7d0':'#fde68a';if(message)el.scrollIntoView({block:'nearest',behavior:'smooth'});}
+    function ocrReset(){
+        ocrFile=null;ocrRowsData=[];
+        if(ocrPreviewUrl){URL.revokeObjectURL(ocrPreviewUrl);ocrPreviewUrl=null;}
+        ocrEl('ocrFile').value='';ocrEl('ocrPreview').removeAttribute('src');ocrEl('ocrPreview').style.display='none';
+        ocrEl('ocrRows').innerHTML='<tr><td colspan="6">先选择或粘贴图片</td></tr>';
+        ocrEl('ocrStatus').textContent='请选择或粘贴新截图';ocrMessage('');
+    }
+    function ocrOpen(){ocrReset();ocrEl('ocrOverlay').style.display='flex';}
+    function ocrClose(){ocrEl('ocrOverlay').style.display='none';ocrReset();}
     function ocrReceive(f){if(!f||!f.type.startsWith('image/'))return;
-        ocrFile=f;ocrEl('ocrPreview').src=URL.createObjectURL(f);ocrEl('ocrPreview').style.display='block';ocrEl('ocrStatus').textContent='已加载截图，点击开始识别';}
+        ocrRowsData=[];ocrEl('ocrRows').innerHTML='<tr><td colspan="6">新截图已加载，点击开始识别</td></tr>';ocrMessage('');
+        if(ocrPreviewUrl)URL.revokeObjectURL(ocrPreviewUrl);
+        ocrFile=f;ocrPreviewUrl=URL.createObjectURL(f);
+        ocrEl('ocrPreview').src=ocrPreviewUrl;ocrEl('ocrPreview').style.display='block';ocrEl('ocrStatus').textContent='已加载新截图，点击开始识别';}
     function ocrParseTime(str){const m=OCR_DATE_RE.exec(String(str));OCR_DATE_RE.lastIndex=0;if(!m)return '';
         const iso=`${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}T${m[4].padStart(2,'0')}:${m[5].padStart(2,'0')}:00+08:00`;
         const t=Date.parse(iso);return Number.isFinite(t)?new Date(t).toISOString():'';}
@@ -2741,19 +2758,38 @@ tbody tr:last-child td { border-bottom: none; }
         if(!x||x.length<2||x.length>25||!/[\u3400-\u9fff]/u.test(x)||/\d|参与|人数|刷新|击退|星期|小时|分钟/.test(x))return false;
         if(ocrParseTime(x))return false;return true;}
     function ocrNormalize(n){return String(n||'').normalize('NFKC').replace(/[\s·・:：]/g,'').replace(/^入侵的/,'')}
-    function ocrCatalogMatch(name){const n=ocrNormalize(name);const c=DEFAULT_BOSSES.find(b=>ocrNormalize(b.name)===n);return c||null;}
-    function ocrBadgeGuess(img, y, nameX){
-        // Conservative pixel heuristic: icon is in leftmost 5% of original game screenshot, near top of each row.
-        // It is a hint, never a substitute for the operator's explicit cross/local selector.
-        try{const canvas=document.createElement('canvas');canvas.width=img.width;canvas.height=img.height;
-            const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.drawImage(img,0,0);
-            const x0=Math.round(img.width*.016), x1=Math.round(img.width*.058);
-            const top=Math.max(0,Math.round(y-60)), bottom=Math.min(img.height,Math.round(y-10));
-            if(x1<=x0||bottom<=top)return false;
-            const dat=ctx.getImageData(x0,top,x1-x0,bottom-top).data;let purple=0;
-            for(let i=0;i<dat.length;i+=4){const [r,g,b]=[dat[i],dat[i+1],dat[i+2]];
-                if(r>55&&b>75&&b>g*1.20&&r>g*1.16&&Math.abs(b-r)<130)purple++;}
-            return purple/(dat.length/4)>.055;
+    function ocrCatalogMatch(name){const n=ocrNormalize(name);const c=DEFAULT_BOSSES.find(b=>ocrNormalize(b.name)===n)||bosses.find(b=>ocrNormalize(b.name)===n);return c||null;}
+    // V4.3: require a strong visual match to the full purple shield-with-sword emblem.
+    // The reference is cropped from the user-supplied real game screenshot, not a generic purple swatch.
+    // A conservative threshold favors false negatives (manual cross selection) over false positives.
+    function ocrBadgeGuess(img,y){
+        try{
+            const ref=getBadgeReference();if(!ref.complete||!ref.naturalWidth)return false;
+            const scale=img.width/1255;
+            const tw=Math.max(20,Math.round(35*scale)),th=Math.max(24,Math.round(44*scale));
+            // Typical emblem is centered about 38px above the boss name, at x≈46/1255*width.
+            const cx=Math.round(46*scale),cy=Math.round(y-38*scale);
+            const cv=document.createElement('canvas');cv.width=35;cv.height=44;
+            const ctx=cv.getContext('2d',{willReadFrequently:true});ctx.drawImage(ref,0,0,35,44);
+            const tpl=ctx.getImageData(0,0,35,44).data;
+            const raw=document.createElement('canvas');raw.width=img.width;raw.height=img.height;
+            const rc=raw.getContext('2d',{willReadFrequently:true});rc.drawImage(img,0,0);
+            let best=-1;
+            for(let dy=-Math.round(12*scale);dy<=Math.round(12*scale);dy+=Math.max(1,Math.round(3*scale))){
+              for(let dx=-Math.round(9*scale);dx<=Math.round(9*scale);dx+=Math.max(1,Math.round(3*scale))){
+                const x=Math.round(cx-tw/2+dx),top=Math.round(cy-th/2+dy);
+                if(x<0||top<0||x+tw>img.width||top+th>img.height)continue;
+                cv.width=35;cv.height=44;ctx.drawImage(raw,x,top,tw,th,0,0,35,44);
+                const sample=ctx.getImageData(0,0,35,44).data;
+                // RGB normalized correlation sampled across border, sword and shield shape.
+                let n=0,sx=0,sy=0,sxx=0,syy=0,sxy=0;
+                for(let j=4;j<40;j+=2)for(let i=3;i<32;i+=2){const k=(j*35+i)*4;
+                    for(let c=0;c<3;c++){const a=tpl[k+c],b=sample[k+c];n++;sx+=a;sy+=b;sxx+=a*a;syy+=b*b;sxy+=a*b;}}
+                const denom=Math.sqrt(Math.max(1,(n*sxx-sx*sx)*(n*syy-sy*sy)));
+                best=Math.max(best,(n*sxy-sx*sy)/denom);
+              }
+            }
+            return best>.72;
         }catch{return false;}
     }
     function ocrBuild(items,img){
@@ -2773,12 +2809,20 @@ tbody tr:last-child td { border-bottom: none; }
             const spawn=rawSpawn||computed;
             const diff=rawSpawn&&killed?(Date.parse(rawSpawn)-Date.parse(killed))/3600000:NaN;
             const mismatch=!!rawSpawn&&hours>0&&Math.abs(diff-hours)>1/120;
-            const badge=ocrBadgeGuess(img,n.y,n.x),scope=badge?'cross':'local';
+            const badge=ocrBadgeGuess(img,n.y),scope=badge?'cross':'local';
             const event=jstCrossActivity();
-            const reason=!cfg?'未入库':!killed?'缺少击退时间':!spawn?'无法计算刷新时间':times.length>2?'时间列不明确':mismatch?`间隔不匹配（截图 ${diff.toFixed(2)}h / 配置 ${hours}h）`:scope==='cross'&&!event.active?'当前不在跨服活动时间':computed?'根据刷新间隔自动补齐':'校验通过';
-            const safe=!!cfg&&!!killed&&!!spawn&&!mismatch&&times.length<=2&&(scope!=='cross'||event.active)&&n.score>.8;
+            const reason=!cfg?'未入库':!killed?'缺少击退时间':!spawn?'无法计算刷新时间':times.length>2?'时间列不明确':mismatch?`间隔不匹配（截图 ${diff.toFixed(2)}h / 配置 ${hours}h）`:scope==='cross'&&(!event.active||Date.parse(spawn)>=crossEventEndMs(event.id))?'超过跨服活动截止时间':computed?'根据刷新间隔自动补齐':'校验通过';
+            const safe=!!cfg&&!!killed&&!!spawn&&!mismatch&&times.length<=2&&(scope!=='cross'||(event.active&&Date.parse(spawn)<crossEventEndMs(event.id)))&&n.score>.8;
             rows.push({name,raw:nameOriginal,killed,spawn,scope,checked:safe,reason,valid:safe,autoCross:badge});
-        });return rows;
+        });
+        // Keep only the newest defeatedAt for each Boss + scope + current mode.
+        // Keep uncertain newest record rather than silently substituting an older entry.
+        const newest=new Map();
+        for(const row of rows){const key=ocrNormalize(row.name)+'|'+row.scope;
+            const previous=newest.get(key);
+            if(!previous||Date.parse(row.killed||'')>Date.parse(previous.killed||''))newest.set(key,row);
+        }
+        return [...newest.values()].sort((a,b)=>Date.parse(b.killed||'')-Date.parse(a.killed||''));
     }
     function ocrRenderRows(){ocrEl('ocrRows').innerHTML=ocrRowsData.length?ocrRowsData.map((r,i)=>`<tr>
        <td><input type="checkbox" data-ocr-check="${i}" ${r.checked?'checked':''}></td>
@@ -2793,26 +2837,47 @@ tbody tr:last-child td { border-bottom: none; }
         try{if(!ocrEnginePromise)ocrEnginePromise=import('https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js@0.4.2/+esm').then(async m=>m.PaddleOCR.create({lang:'ch',ocrVersion:'PP-OCRv5',ortOptions:{backend:'wasm'}}));
             const engine=await ocrEnginePromise;ocrEl('ocrStatus').textContent='OCR 识别中…';
             const [result]=await engine.predict(ocrFile);
-            const img=await createImageBitmap(ocrFile);ocrRowsData=ocrBuild(result?.items||[],img);img.close();ocrRenderRows();
+            const img=await createImageBitmap(ocrFile);await getBadgeReference().decode().catch(()=>{});ocrRowsData=ocrBuild(result?.items||[],img);img.close();ocrMessage('');ocrRenderRows();
             ocrEl('ocrStatus').textContent=`识别出 ${ocrRowsData.length} 条 Boss · ${ocrRowsData.filter(r=>r.checked).length} 条默认勾选`;}
         catch(e){ocrEnginePromise=null;ocrEl('ocrStatus').textContent='识别失败：'+String(e?.message||e)}finally{btn.disabled=false;}
     }
-    async function ocrSubmit(){
-        if(!uploadEnabled||!adminAuthenticated){showToast('请先登录管理员并打开上传模式');return;}
+    function ocrSubmit(){
+        ocrMessage('');
         const chosen=ocrRowsData.filter(r=>r.checked);
-        if(!chosen.length){showToast('没有勾选任何 Boss');return;}
+        if(!chosen.length){ocrMessage('没有勾选任何 Boss。请先勾选需要更新的记录。');return;}
+        const event=jstCrossActivity();
+        const prohibited=chosen.filter(r=>r.scope==='cross'&&(!event.active||Date.parse(r.spawn)>=crossEventEndMs(event.id)));
+        if(prohibited.length){ocrMessage('跨服活动已结束或刷新时间超过活动截止：'+prohibited.map(r=>r.name).join('、')+'。请取消勾选后再更新。');return;}
+        const invalid=chosen.filter(r=>!r.killed||!r.spawn||!Number.isFinite(Date.parse(r.spawn)));
+        if(invalid.length){ocrMessage('以下记录缺少有效时间：'+invalid.map(r=>r.name).join('、')+'。请取消勾选或重新识别。');return;}
         const dubious=chosen.filter(r=>!r.valid);
-        if(dubious.length&&!confirm(`你勾选了 ${dubious.length} 条异常记录，确定提交？`))return;
-        const event=jstCrossActivity();if(chosen.some(r=>r.scope==='cross')&&!event.active){showToast('当前不是跨服活动时间，无法更新跨服');return;}
-        const button=ocrEl('ocrSubmitBtn');button.disabled=true;
-        try{const res=await fetch('/api/boss?action=ocr-apply&mode='+mode,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({rows:chosen.map(r=>({name:r.name,scope:r.scope,nextTime:r.spawn}))})});
-            const payload=await res.json();if(!res.ok)throw new Error(payload.error||('HTTP '+res.status));
-            // Apply the canonical state returned by D1, preserving catalog / other bosses.
-            if(payload.data?._catalog)applyCatalog(payload.data._catalog);
-            bosses=payload.data.bosses.map(b=>({...b}));crossBosses=payload.data._crossBosses||[];
-            remindedBosses=new Set(payload.data._remindedBosses||[]);stoppedFlashing=new Set(payload.data._stoppedFlashing||[]);
-            saveData();renderTable();ocrClose();showToast(`✅ ${payload.updated} 条已直接更新到云端`);
-        }catch(e){showToast('更新失败：'+e.message)}finally{button.disabled=false;}
+        if(dubious.length&&!confirm('你选择了 '+dubious.length+' 条需要核对的记录，仍要写入当前页面吗？'))return;
+        // Only local state changes here. Cloud is updated exclusively by the original floating sync button.
+        const currentMode=mode;
+        let localCount=0,crossCount=0,ignored=0;
+        pushUndo('OCR 本地更新前');
+        for(const r of chosen){
+            if(r.scope==='cross'){
+                const key=ocrNormalize(r.name);
+                const matching=crossBosses.filter(b=>ocrNormalize(b.name)===key&&b.activityId===event.id);
+                const latest=matching.reduce((x,b)=>!x||Date.parse(b.time)>Date.parse(x.time)?b:x,null);
+                if(latest&&Date.parse(latest.time)>=Date.parse(r.spawn)){ignored++;continue;}
+                crossBosses=crossBosses.filter(b=>!(ocrNormalize(b.name)===key&&b.activityId===event.id));
+                const cfg=ocrCatalogMatch(r.name);
+                crossBosses.push({id:'cross_'+crypto.randomUUID(),name:cfg?.name||r.name,zone:cfg?.zone||getZone(r.name),time:r.spawn,interval:Number(cfg?.interval)||1,prob:Number(cfg?.prob)||0,scope:'cross',activityId:event.id});
+                crossCount++;
+            }else{
+                const key=ocrNormalize(r.name);
+                const b=bosses.find(x=>ocrNormalize(x.name)===key);
+                if(!b){ignored++;continue;}
+                if(b.time&&Number.isFinite(Date.parse(b.time))&&Date.parse(b.time)>Date.parse(r.spawn)){ignored++;continue;}
+                b.time=r.spawn;
+                remindedBosses.delete(b.id);stoppedFlashing.delete(b.id);
+                localCount++;
+            }
+        }
+        saveData();renderTable();ocrClose();
+        showToast('✅ 已更新当前'+(currentMode==='new'?'新区':'老区')+'页面：本服 '+localCount+'、跨服 '+crossCount+' 条'+(ignored?'；跳过较旧或未入库 '+ignored+' 条':'')+'。尚未上传 D1，请使用原悬浮上传按钮。');
     }
     ocrEl('ocrFile').addEventListener('change',e=>ocrReceive(e.target.files[0]));
     document.addEventListener('paste',e=>{if(ocrEl('ocrOverlay').style.display!=='flex')return;
@@ -2821,8 +2886,20 @@ tbody tr:last-child td { border-bottom: none; }
     });
     ocrEl('ocrRows').addEventListener('change',e=>{const index=e.target.dataset.ocrCheck??e.target.dataset.ocrScope;
         if(index===undefined)return;const row=ocrRowsData[Number(index)];if(!row)return;
+        ocrMessage('');
         if(e.target.dataset.ocrCheck!==undefined)row.checked=e.target.checked;
-        else {row.scope=e.target.value;row.valid=row.valid&&(row.scope!=='cross'||jstCrossActivity().active);}
+        else {row.scope=e.target.value;
+            const act=jstCrossActivity();
+            if(row.scope==='cross'&&(!act.active||Date.parse(row.spawn)>=crossEventEndMs(act.id))){row.checked=false;row.reason='当前不在跨服活动时间或超过01:00截止';row.valid=false;}
+            else if(row.scope==='local'&&row.killed&&row.spawn&&ocrCatalogMatch(row.name)){
+                const cfg=ocrCatalogMatch(row.name),dif=(Date.parse(row.spawn)-Date.parse(row.killed))/3600000;
+                row.valid=Number.isFinite(dif)&&Math.abs(dif-Number(cfg.interval))<1/120;
+                row.reason=row.valid?'校验通过':'时间间隔不匹配，请核对';
+                row.checked=row.valid;
+            }else if(row.scope==='cross'&&row.killed&&row.spawn&&ocrCatalogMatch(row.name)){
+                row.valid=true;row.reason='已手动选择跨服，请核对徽章';row.checked=true;
+            }
+            ocrRenderRows();}
     });
     window.ocrOpen=ocrOpen;window.ocrClose=ocrClose;window.ocrRun=ocrRun;window.ocrSubmit=ocrSubmit;
 
