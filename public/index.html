@@ -617,7 +617,7 @@ tbody tr:last-child td { border-bottom: none; }
         <div class="group">
             <label>🔔 提前</label>
             <select id="remindMinutes">
-                <option value="1000" selected>1 秒（到点提醒）</option>
+                <option value="1000" selected>倒计时结束后</option>
                 <option value="60000">1 分钟</option>
                 <option value="120000">2 分钟</option>
                 <option value="180000">3 分钟</option>
@@ -1108,6 +1108,7 @@ tbody tr:last-child td { border-bottom: none; }
     let stoppedFlashing = new Set();
     let remindedOther = new Set();   // 另一区的提醒状态（key: 区服|bossId）
     let speakQueue = [];
+    let speakWakeTimer = null; // 到点前预入队，真正刷新时才播放
     let isSpeaking = false;
     let audioCtx = null;
     let toastTimer = null;
@@ -1374,9 +1375,7 @@ tbody tr:last-child td { border-bottom: none; }
                 const details=conflicts.slice(0,6).map(x=>x.name+'（'+x.reason+'）').join('、');
                 throw new Error('云端有较新的记录：'+details+'。本次未上传。请先下载云端数据后核对。');
             }
-            if(!confirm('上传安全检查通过。确认将当前'+(uploadedMode==='new'?'新区':'老区')+'的修改上传到 D1？')){
-                cloudStatus.textContent='☁️ 已取消';cloudStatus.className='cloud-status';return;
-            }
+            // 正常上传无需二次确认；异常仍在下方 catch 中明确提示。
             const response=await fetch('/api/boss?mode='+encodeURIComponent(uploadedMode),{
                 method:'PUT',credentials:'same-origin',headers:{'Content-Type':'application/json'},
                 body:JSON.stringify({...data,_expectedRevision:preview.revision})});
@@ -1455,13 +1454,13 @@ tbody tr:last-child td { border-bottom: none; }
                 utterance.lang='zh-CN';utterance.rate=.85;utterance.pitch=1.05;
                 utterance.volume=Number(volumeSlider.value)/100;
                 let advanced=false;
-                const advance=()=>{if(advanced)return;advanced=true;clearTimeout(window.__speakGuard);if(speakQueue.length)setTimeout(processSpeakQueue,400);else isSpeaking=false;};
+                const advance=()=>{if(advanced)return;advanced=true;clearTimeout(window.__speakGuard);isSpeaking=false;if(speakQueue.length)setTimeout(processSpeakQueue,400);};
                 utterance.onend=advance;utterance.onerror=advance;
                 window.speechSynthesis.speak(utterance);
                 clearTimeout(window.__speakGuard);
                 window.__speakGuard=setTimeout(advance,20000);
             } else isSpeaking=false;
-        } catch(e){if(speakQueue.length)setTimeout(processSpeakQueue,500);else isSpeaking=false;}
+        } catch(e){isSpeaking=false;if(speakQueue.length)setTimeout(processSpeakQueue,500);}
     }
 
     // 当前区 + 另一区 的 Boss 全量（另一区实时读 localStorage，保证数据最新）
@@ -1483,30 +1482,41 @@ tbody tr:last-child td { border-bottom: none; }
     }
 
     function processSpeakQueue() {
-        if (speakQueue.length === 0) { isSpeaking = false; return; }
+        if (isSpeaking) return;
+        clearTimeout(speakWakeTimer); speakWakeTimer = null;
+        if (!speakQueue.length) return;
+        const now = Date.now();
+        // 队列里的未来事件先保留；有已到点项目时优先播报，避免排在前面的预登记事件阻塞其他提醒。
+        const idx = speakQueue.findIndex(q => !q.notBefore || q.notBefore <= now);
+        if (idx < 0) {
+            const next = Math.min(...speakQueue.map(q => q.notBefore));
+            speakWakeTimer = setTimeout(processSpeakQueue, Math.max(20, next-now));
+            return;
+        }
         isSpeaking = true;
-        const item = speakQueue.shift();
+        const item = speakQueue.splice(idx,1)[0];
         const isCur = item.mode === mode;
         const marked = isCur && !item.cross ? remindedBosses.has(item.id) : remindedOther.has(item.key);
         if (!item.name || marked) {
-            if (speakQueue.length > 0) setTimeout(processSpeakQueue, 500);
-            else isSpeaking = false;
+            isSpeaking = false;
+            if (speakQueue.length) setTimeout(processSpeakQueue, 10);
             return;
         }
         if(item.cross && (!jstCrossActivity().active || (item.time && Date.parse(item.time)>=crossEventEndMs(jstCrossActivity().id)))){
-            if(speakQueue.length>0)setTimeout(processSpeakQueue,100);else isSpeaking=false;return;
+            isSpeaking=false;
+            if(speakQueue.length)setTimeout(processSpeakQueue,10);
+            return;
         }
         speakBossAlert(item.name, item.mode, !!item.cross);
         showDueGlass(item.name, item.mode);
         if (isCur && !item.cross) remindedBosses.add(item.id);
         else remindedOther.add(item.key);
-        // 多标签页防重：广播「已播报」标记，其他同时打开的页面收到后同步标记，避免重复播报
         try {
             localStorage.setItem('bossData_speak_broadcast', JSON.stringify({ key: item.key, at: Date.now() }));
         } catch (err) { /* ignore */ }
         saveData();
         renderTable();
-        // 下一条播报由 speakBossAlert 的 utterance.onend 推进（播完一条再播下一条，不打断）
+        // 下一条由语音 onend 处理；已经入队的 Boss 不受检测窗口限制。
     }
 
     // Boss 到点玻璃框提醒：透明玻璃质感 + 向上凸起 + 放大字体，显示几秒后自动收起
@@ -1527,41 +1537,39 @@ tbody tr:last-child td { border-bottom: none; }
     }
 
     function checkAndSpeak() {
-        const now = new Date();
-        const remindMs = parseInt(remindMinutesSelect.value) || 0;
+        const now = Date.now();
+        const remindMs = parseInt(remindMinutesSelect.value) || 1000;
+        const onDue = remindMs === 1000;
         const dueBosses = [];
-
-        // 新区 + 老区一起检查：两区的 Boss 到点都会语音提醒
         const allBosses = getAllRemindableBosses();
         for (const b of allBosses) {
             if (!b.time) continue;
-            // 区服负责人机制：该区已有其他活跃页面负责播报时，本页跳过（避免两遍）
             const owner = getOwner(b._mode);
             if (owner && owner.pid !== PAGE_ID) continue;
-            const target = new Date(b.time);
-            const diffMs = target - now;
+            const targetMs = Date.parse(b.time);
+            if (!Number.isFinite(targetMs)) continue;
+            const diffMs = targetMs - now;
             const key = b._mode + '|' + b.id;
             const marked = b._cross || b._mode !== mode ? remindedOther.has(key) : remindedBosses.has(b.id);
-            if (marked || diffMs < 0) continue;
-            // 到点前提前量内触发；到点后 60 秒内仍可触发（防止 1 秒检查周期相位错开漏掉，靠已播报标记防重）
-            if (diffMs <= remindMs && diffMs > -60000) {
-                dueBosses.push({ boss: b, diffMs: diffMs, key: key });
-            }
+            if (marked) continue;
+            // 「倒计时结束后」: -3s~+3s 仅登记；达到刷新时间后再播放。
+            // 其余 1/2/3/4/5 分钟: 经过提前量触发点的 5 秒内登记。
+            const eligible = onDue ? diffMs <= 3000 && diffMs >= -3000
+                : diffMs <= remindMs && diffMs >= remindMs-5000;
+            if (eligible) dueBosses.push({ boss:b, diffMs, key, targetMs });
         }
-
-        dueBosses.sort((a, b) => a.diffMs - b.diffMs);
-        if (dueBosses.length === 0) return;
-
+        dueBosses.sort((a,b)=>a.targetMs-b.targetMs);
         for (const item of dueBosses) {
-            const alreadyQueued = speakQueue.some(q => q.key === item.key);
-            const isCur = item.boss._mode === mode;
+            const alreadyQueued = speakQueue.some(q=>q.key===item.key && q.time===item.boss.time);
+            const isCur = item.boss._mode===mode;
             const alreadyMarked = isCur && !item.boss._cross ? remindedBosses.has(item.boss.id) : remindedOther.has(item.key);
-            if (!alreadyQueued && !alreadyMarked) {
-                speakQueue.push({ key: item.key, id: item.boss.id, name: item.boss.name, mode: item.boss._mode, cross:!!item.boss._cross, time:item.boss.time });
+            if(!alreadyQueued && !alreadyMarked) {
+                speakQueue.push({key:item.key,id:item.boss.id,name:item.boss.name,mode:item.boss._mode,
+                    cross:!!item.boss._cross,time:item.boss.time,
+                    notBefore:onDue?item.targetMs:0});
             }
         }
-
-        if (!isSpeaking) processSpeakQueue();
+        if (!isSpeaking && speakQueue.length) processSpeakQueue();
     }
 
     function stopFlashing(bossId) {
