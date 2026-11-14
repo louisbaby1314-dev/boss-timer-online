@@ -20,20 +20,19 @@ function crossEventEndMs(id){return /^\d{4}-\d{2}-\d{2}$/.test(String(id||''))?D
 function visibleCross(data){const act=jstActivity();return act.active?(data._crossBosses||[]).filter(b=>b.activityId===act.id&&Number.isFinite(Date.parse(b.time))&&Date.parse(b.time)<crossEventEndMs(act.id)):[];}
 function filterCross(data,now=Date.now()) {
   const act=jstActivity(now), old=Array.isArray(data._crossBosses)?data._crossBosses:[];
-  const fresh=act.active?old.filter(b=>b&&b.activityId===act.id&&typeof b.name==='string'&&Number.isFinite(Date.parse(b.time))):[];
+  const fresh=act.active?old.filter(b=>b&&b.activityId===act.id&&typeof b.name==='string'&&Number.isFinite(Date.parse(b.time))&&Date.parse(b.time)<crossEventEndMs(act.id)):[];
   data._crossBosses=fresh;
   return fresh.length!==old.length;
 }
 // Authenticated bulk postponement for this mode's cross-server records only.
-// Values beyond the activity deadline remain stored but cannot be shown or announced;
-// the ordinary GET cleanup removes them after the activity actually ends.
+// Values beyond the activity deadline are hidden and removed by the next GET cleanup.
 async function delayCrossBatch(request,env,mode){
   if(request.method!=='POST')return json({error:'Method not allowed'},405);
   if(!sameOrigin(request)||!(await isAuthenticated(request,env)))return json({error:'Admin authorization required'},401);
   if(env.STORAGE_BACKEND!=='d1'||!env.BOSS_DB)return json({error:'D1 backend required'},409);
   const act=jstActivity();if(!act.active)return json({error:'Cross-server event is not active'},409);
   try{
-    const row=await env.BOSS_DB.prepare('SELECT payload FROM boss_state WHERE mode=?').bind(mode).first();
+    const row=await env.BOSS_DB.prepare('SELECT payload,updated_at FROM boss_state WHERE mode=?').bind(mode).first();
     if(!row)return json({error:'D1 mode not initialized'},409);
     const data=JSON.parse(row.payload);filterCross(data);
     const now=Date.now();let updated=0,hidden=0;
@@ -47,7 +46,9 @@ async function delayCrossBatch(request,env,mode){
       b.time=new Date(next).toISOString();updated++;
       if(next>=crossEventEndMs(act.id))hidden++;
     }
-    if(updated){data.updatedAt=new Date().toISOString();const issue=validateBossData(data);if(issue)return json({error:issue},400);await writeD1(env.BOSS_DB,mode,data);}
+    if(updated){data.updatedAt=new Date().toISOString();const issue=validateBossData(data);if(issue)return json({error:issue},400);
+      const result=await env.BOSS_DB.prepare('UPDATE boss_state SET payload=?,updated_at=? WHERE mode=? AND updated_at=?').bind(JSON.stringify(data),data.updatedAt+'-'+crypto.randomUUID(),mode,row.updated_at).run();
+      if((result.meta?.changes??0)!==1)return json({error:'云端刚被其他操作修改，请重新顺延'},409);}
     return json({ok:true,updated,hidden,data:{...data,_crossBosses:visibleCross(data)}});
   }catch(e){return json({error:'D1 cross-server delay failed',detail:safeD1Error(e)},503)}
 }
@@ -68,7 +69,7 @@ async function applyOcrBatch(request,env,mode) {
   }
   try{
     // Atomic read-modify-write for the selected zone; never replace the whole catalog with browser copies.
-    const result=await env.BOSS_DB.prepare('SELECT payload FROM boss_state WHERE mode=?').bind(mode).first();
+    const result=await env.BOSS_DB.prepare('SELECT payload,updated_at FROM boss_state WHERE mode=?').bind(mode).first();
     if(!result)return json({error:'D1 mode not initialized'},409);
     const data=JSON.parse(result.payload);filterCross(data);
     const catalog=Array.isArray(data._catalog?.bosses)?data._catalog.bosses:data.bosses;
@@ -93,7 +94,8 @@ async function applyOcrBatch(request,env,mode) {
     }
     data.updatedAt=new Date().toISOString();
     const invalid=validateBossData(data);if(invalid)return json({error:invalid},400);
-    await writeD1(env.BOSS_DB,mode,data);
+    const saved=await env.BOSS_DB.prepare('UPDATE boss_state SET payload=?,updated_at=? WHERE mode=? AND updated_at=?').bind(JSON.stringify(data),data.updatedAt+'-'+crypto.randomUUID(),mode,result.updated_at).run();
+    if((saved.meta?.changes??0)!==1)return json({error:'云端已被其他操作修改，请重新识别后更新'},409);
     return json({ok:true,updated:rows.length,data:{...data,_crossBosses:visibleCross(data)}});
   }catch(e){return json({error:'D1 OCR update failed',detail:safeD1Error(e)},503)}
 }
@@ -218,14 +220,22 @@ export async function onRequest({request,env}) {
   if(backend==='d1') {
     if(!env.BOSS_DB) return json({error:'D1 binding BOSS_DB is missing'},503);
     try {
-      const row=await env.BOSS_DB.prepare('SELECT payload FROM boss_state WHERE mode=?').bind(mode).first();
-      if(!row)return json({error:'D1 mode not imported yet',mode},503);
-      const data=JSON.parse(row.payload);
-      if(filterCross(data)){
-        // GET enforces permanent cleanup after the event, not just front-end hiding.
-        await writeD1(env.BOSS_DB,mode,data);
+      // Concurrent-safe cleanup. Never write a stale whole-row payload over a newer upload.
+      for(let attempt=0;attempt<3;attempt++){
+        const row=await env.BOSS_DB.prepare('SELECT payload,updated_at FROM boss_state WHERE mode=?').bind(mode).first();
+        if(!row)return json({error:'D1 mode not imported yet',mode},503);
+        const data=JSON.parse(row.payload);
+        if(!filterCross(data))return json({...data,_crossBosses:visibleCross(data)},200);
+        const revision=new Date().toISOString()+'-'+crypto.randomUUID();
+        const result=await env.BOSS_DB.prepare('UPDATE boss_state SET payload=?,updated_at=? WHERE mode=? AND updated_at=?')
+          .bind(JSON.stringify(data),revision,mode,row.updated_at).run();
+        if((result.meta?.changes??0)===1)return json({...data,_crossBosses:visibleCross(data)},200);
       }
-      return json({...data,_crossBosses:visibleCross(data)},200);
+      // A concurrent writer won every attempt. Return its latest state without a stale write.
+      const latest=await env.BOSS_DB.prepare('SELECT payload FROM boss_state WHERE mode=?').bind(mode).first();
+      if(!latest)return json({error:'D1 mode unavailable'},503);
+      const state=JSON.parse(latest.payload);filterCross(state);
+      return json({...state,_crossBosses:visibleCross(state)},200);
     } catch(e) {return json({error:'D1 read failed',detail:safeD1Error(e)},503);}
   }
   return readJsonbin(env,mode);
