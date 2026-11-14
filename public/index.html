@@ -606,8 +606,8 @@ tbody tr:last-child td { border-bottom: none; }
         <h1>⚔️ Boss 刷新 <small id="modeLabel" style="font-weight:700; color:#60a5fa;">🆕 新区</small></h1>
         <div class="top-actions">
             <span class="clock-badge" id="clockBadge">🕐 <span id="currentTimeDisplay">--:--:--</span> <span id="tzTagInline">· 🇨🇳 北京</span></span>
-            <button class="btn-tz" id="tzJapan" onclick="setTimezone('japan')">🇯🇵 日本</button>
-            <button class="btn-tz active" id="tzChina" onclick="setTimezone('china')">🇨🇳 中国</button>
+            <button class="btn-tz active" id="tzJapan" onclick="setTimezone('japan')">🇯🇵 日本</button>
+            <button class="btn-tz" id="tzChina" onclick="setTimezone('china')">🇨🇳 中国</button>
             <button class="btn-tab-new active" data-mode="new" onclick="switchMode('new')" id="tabNew">🆕 新区</button>
             <button class="btn-tab-old" data-mode="old" onclick="switchMode('old')" id="tabOld">🕰️ 老区</button>
         </div>
@@ -2806,9 +2806,9 @@ tbody tr:last-child td { border-bottom: none; }
         ocrEl('ocrPreview').src=ocrPreviewUrl;ocrEl('ocrPreview').style.display='block';ocrEl('ocrStatus').textContent='新截图已加载，自动开始识别…';
         if(!ocrRunning)void ocrRun();}
     function ocrParseTime(str){const m=OCR_DATE_RE.exec(String(str));OCR_DATE_RE.lastIndex=0;if(!m)return '';
-        const iso=`${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}T${m[4].padStart(2,'0')}:${m[5].padStart(2,'0')}:00+08:00`;
+        const iso=`${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}T${m[4].padStart(2,'0')}:${m[5].padStart(2,'0')}:00${timezone==='japan'?'+09:00':'+08:00'}`;
         const t=Date.parse(iso);return Number.isFinite(t)?new Date(t).toISOString():'';}
-    function ocrDisplayTime(iso){return iso?new Intl.DateTimeFormat('zh-CN',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(iso)):'—'}
+    function ocrDisplayTime(iso){return iso?new Intl.DateTimeFormat('zh-CN',{timeZone:timezone==='japan'?'Asia/Tokyo':'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).format(new Date(iso)):'—'}
     function ocrIsName(s){const x=String(s||'').trim();OCR_DATE_RE.lastIndex=0;
         if(!x||x.length<2||x.length>25||!/[\u3400-\u9fff]/u.test(x)||/\d|参与|人数|刷新|击退|星期|小时|分钟/.test(x)||/^(首领|道具|参与者|通知|出没时间|击退时间)$/.test(x))return false;
         if(ocrParseTime(x))return false;return true;}
