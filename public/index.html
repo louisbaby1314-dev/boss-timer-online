@@ -656,7 +656,6 @@ tbody tr:last-child td { border-bottom: none; }
         <button class="btn btn-outline" onclick="toggleMoreMenu()" id="moreBtn">⋯ 更多</button>
         <div class="more-menu" id="moreMenu">
             <button class="btn btn-outline" onclick="cloudUndoLast()" title="仅撤销当前新区或老区最近一次手动云端上传">↶ 撤销上次云端上传</button>
-            <button class="btn btn-danger" onclick="clearAllReminded()">✕ 清除提醒标记</button>
             <button class="btn btn-outline" onclick="openCatalog()">⚙️ Boss / 地区管理</button>
             <button class="btn btn-outline" onclick="openCloudSettings()">🔐 管理员授权</button>
             <button class="btn btn-info" onclick="loadFromCloud()">📥 从云端下载</button>
@@ -1444,7 +1443,7 @@ tbody tr:last-child td { border-bottom: none; }
         } catch (e) {}
     }
 
-    function speakBossAlert(bossName, alertMode, isCross=false) {
+    function speakBossAlert(bossName, alertMode, isCross=false, onStarted=null) {
         try {
             if ('speechSynthesis' in window) {
                 const prefix=(alertMode||mode)==='new'?'新区 ':'老区 ';
@@ -1455,6 +1454,7 @@ tbody tr:last-child td { border-bottom: none; }
                 utterance.volume=Number(volumeSlider.value)/100;
                 let advanced=false;
                 const advance=()=>{if(advanced)return;advanced=true;clearTimeout(window.__speakGuard);isSpeaking=false;if(speakQueue.length)setTimeout(processSpeakQueue,400);};
+                utterance.onstart=()=>{if(onStarted)onStarted();};
                 utterance.onend=advance;utterance.onerror=advance;
                 window.speechSynthesis.speak(utterance);
                 clearTimeout(window.__speakGuard);
@@ -1469,7 +1469,7 @@ tbody tr:last-child td { border-bottom: none; }
         visibleCrossBosses().forEach(b=>list.push({...b,_mode:mode,_cross:true}));
         const otherMode = mode === 'new' ? 'old' : 'new';
         try {
-            const raw = localStorage.getItem('bossData_integrated_' + otherMode);
+            const raw = localStorage.getItem('bossData_alert_cache_' + otherMode) || localStorage.getItem('bossData_integrated_' + otherMode);
             if (raw) {
                 const p = JSON.parse(raw);
                 if (p && Array.isArray(p.bosses)) {
@@ -1481,42 +1481,76 @@ tbody tr:last-child td { border-bottom: none; }
         return list;
     }
 
+    // V4.4.5: A single reminder is one specific spawn cycle, not a permanent Boss ID.
+    // Old per-ID reminder markers are kept for legacy UI compatibility only.
+    const REMINDER_HISTORY_KEY = 'bossV445_spoken_cycles';
+    let spokenCycles = new Map();
+    try { spokenCycles = new Map(JSON.parse(localStorage.getItem(REMINDER_HISTORY_KEY)||'[]')); } catch (_) {}
+    function reminderCycleKey(b, reminderLead) {
+        const m=b._mode||b.mode||mode, cross=!!(b._cross||b.cross||b.scope==='cross');
+        const t=Date.parse(b.time||'');
+        if (!Number.isFinite(t)) return '';
+        return [m, cross?'cross':'local', String(b.id||b.name), String(t),
+          String(reminderLead),cross?String(b.activityId||'unknown'):''].join('|');
+    }
+    function pruneReminderHistory(){
+        const now=Date.now();
+        for(const [k,v] of spokenCycles)if(!Number.isFinite(v)||v<now-8*86400000||v>now+60000)spokenCycles.delete(k);
+        if(spokenCycles.size>1600)for(const k of [...spokenCycles.keys()].slice(0,spokenCycles.size-1200))spokenCycles.delete(k);
+        try{localStorage.setItem(REMINDER_HISTORY_KEY,JSON.stringify([...spokenCycles]));}catch(_){ }
+    }
+    function retireStaleSpeakTasks(){
+        const live=new Set(getAllRemindableBosses().filter(b=>b.time).map(b=>reminderCycleKey(b,parseInt(remindMinutesSelect.value)||1000)));
+        speakQueue=speakQueue.filter(q=>live.has(q.key));
+        pruneReminderHistory();
+    }
+    function markCycleSpoken(key){
+        spokenCycles.set(key,Date.now());pruneReminderHistory();
+        try{localStorage.setItem('bossData_speak_broadcast',JSON.stringify({key,at:Date.now(),v:445}));}catch(_){}
+    }
+    // Other-mode monitoring does not overwrite the currently edited admin zone.
+    async function refreshOtherZoneForAlerts(){
+        const other=mode==='new'?'old':'new';
+        try{
+            const r=await fetch('/api/boss?mode='+other,{cache:'no-store'});if(!r.ok)return;
+            const d=await r.json();if(!Array.isArray(d.bosses))return;
+            // Separate cache: never replace another tab's unsaved editing state.
+            const k='bossData_alert_cache_'+other;
+            localStorage.setItem(k,JSON.stringify({bosses:d.bosses,_crossBosses:d._crossBosses||[],fetchedAt:Date.now()}));
+            retireStaleSpeakTasks();
+        }catch(e){console.warn('另一区提醒同步失败',e)}
+    }
+    setInterval(refreshOtherZoneForAlerts,60000);
+    setInterval(retireStaleSpeakTasks,10000);
+    document.addEventListener('visibilitychange',()=>{if(!document.hidden){refreshOtherZoneForAlerts();retireStaleSpeakTasks();}});
+
     function processSpeakQueue() {
         if (isSpeaking) return;
-        clearTimeout(speakWakeTimer); speakWakeTimer = null;
+        clearTimeout(speakWakeTimer);speakWakeTimer=null;
         if (!speakQueue.length) return;
-        const now = Date.now();
-        // 队列里的未来事件先保留；有已到点项目时优先播报，避免排在前面的预登记事件阻塞其他提醒。
-        const idx = speakQueue.findIndex(q => !q.notBefore || q.notBefore <= now);
-        if (idx < 0) {
-            const next = Math.min(...speakQueue.map(q => q.notBefore));
-            speakWakeTimer = setTimeout(processSpeakQueue, Math.max(20, next-now));
-            return;
+        const now=Date.now();
+        const idx=speakQueue.findIndex(q=>!q.notBefore||q.notBefore<=now);
+        if(idx<0){
+            const next=Math.min(...speakQueue.map(q=>q.notBefore));
+            speakWakeTimer=setTimeout(processSpeakQueue,Math.max(20,next-now));return;
         }
-        isSpeaking = true;
-        const item = speakQueue.splice(idx,1)[0];
-        const isCur = item.mode === mode;
-        const marked = isCur && !item.cross ? remindedBosses.has(item.id) : remindedOther.has(item.key);
-        if (!item.name || marked) {
-            isSpeaking = false;
-            if (speakQueue.length) setTimeout(processSpeakQueue, 10);
-            return;
+        const item=speakQueue.splice(idx,1)[0];
+        if(!item.name||spokenCycles.has(item.key)){if(speakQueue.length)setTimeout(processSpeakQueue,10);return;}
+        const source=getAllRemindableBosses().find(b=>reminderCycleKey(b,item.lead)===item.key);
+        if(!source || (item.cross&&!crossVisible(source))){
+            if(speakQueue.length)setTimeout(processSpeakQueue,10);return;
         }
-        if(item.cross && (!jstCrossActivity().active || (item.time && Date.parse(item.time)>=crossEventEndMs(jstCrossActivity().id)))){
-            isSpeaking=false;
-            if(speakQueue.length)setTimeout(processSpeakQueue,10);
-            return;
-        }
-        speakBossAlert(item.name, item.mode, !!item.cross);
-        showDueGlass(item.name, item.mode);
-        if (isCur && !item.cross) remindedBosses.add(item.id);
-        else remindedOther.add(item.key);
-        try {
-            localStorage.setItem('bossData_speak_broadcast', JSON.stringify({ key: item.key, at: Date.now() }));
-        } catch (err) { /* ignore */ }
-        saveData();
-        renderTable();
-        // 下一条由语音 onend 处理；已经入队的 Boss 不受检测窗口限制。
+        isSpeaking=true;
+        // Mark at actual utterance start rather than at queue insertion.
+        speakBossAlert(item.name,item.mode,!!item.cross,()=>{
+            if(!spokenCycles.has(item.key)){
+                markCycleSpoken(item.key);
+                if(item.mode===mode&&!item.cross)remindedBosses.add(item.id);
+                else remindedOther.add(item.key);
+                showDueGlass(item.name,item.mode);
+                renderTable();
+            }
+        });
     }
 
     // Boss 到点玻璃框提醒：透明玻璃质感 + 向上凸起 + 放大字体，显示几秒后自动收起
@@ -1537,39 +1571,28 @@ tbody tr:last-child td { border-bottom: none; }
     }
 
     function checkAndSpeak() {
-        const now = Date.now();
-        const remindMs = parseInt(remindMinutesSelect.value) || 1000;
-        const onDue = remindMs === 1000;
-        const dueBosses = [];
-        const allBosses = getAllRemindableBosses();
-        for (const b of allBosses) {
-            if (!b.time) continue;
-            const owner = getOwner(b._mode);
-            if (owner && owner.pid !== PAGE_ID) continue;
-            const targetMs = Date.parse(b.time);
-            if (!Number.isFinite(targetMs)) continue;
-            const diffMs = targetMs - now;
-            const key = b._mode + '|' + b.id;
-            const marked = b._cross || b._mode !== mode ? remindedOther.has(key) : remindedBosses.has(b.id);
-            if (marked) continue;
-            // 「倒计时结束后」: -3s~+3s 仅登记；达到刷新时间后再播放。
-            // 其余 1/2/3/4/5 分钟: 经过提前量触发点的 5 秒内登记。
-            const eligible = onDue ? diffMs <= 3000 && diffMs >= -3000
-                : diffMs <= remindMs && diffMs >= remindMs-5000;
-            if (eligible) dueBosses.push({ boss:b, diffMs, key, targetMs });
+        const now=Date.now(), lead=parseInt(remindMinutesSelect.value)||1000;
+        const onDue=lead===1000;
+        const allBosses=getAllRemindableBosses();
+        for(const b of allBosses){
+            if(!b.time||!b.id)continue;
+            const owner=getOwner(b._mode);
+            if(owner&&owner.pid!==PAGE_ID)continue;
+            const t=Date.parse(b.time);
+            if(!Number.isFinite(t))continue;
+            const cross=!!b._cross;
+            if(cross&&!crossVisible(b))continue;
+            const key=reminderCycleKey(b,lead);
+            if(!key||spokenCycles.has(key)||speakQueue.some(q=>q.key===key))continue;
+            const diff=t-now;
+            // At due: gather from -3s, enqueue through +3s; speak from time zero.
+            // Early settings use the existing 5-second catch-up window.
+            const eligible=onDue?(diff<=3000&&diff>=-3000):(diff<=lead&&diff>=lead-5000);
+            if(!eligible)continue;
+            speakQueue.push({key,id:b.id,name:b.name,mode:b._mode,cross,time:b.time,
+                lead,notBefore:onDue?t:0});
         }
-        dueBosses.sort((a,b)=>a.targetMs-b.targetMs);
-        for (const item of dueBosses) {
-            const alreadyQueued = speakQueue.some(q=>q.key===item.key && q.time===item.boss.time);
-            const isCur = item.boss._mode===mode;
-            const alreadyMarked = isCur && !item.boss._cross ? remindedBosses.has(item.boss.id) : remindedOther.has(item.key);
-            if(!alreadyQueued && !alreadyMarked) {
-                speakQueue.push({key:item.key,id:item.boss.id,name:item.boss.name,mode:item.boss._mode,
-                    cross:!!item.boss._cross,time:item.boss.time,
-                    notBefore:onDue?item.targetMs:0});
-            }
-        }
-        if (!isSpeaking && speakQueue.length) processSpeakQueue();
+        if(!isSpeaking&&speakQueue.length)processSpeakQueue();
     }
 
     function stopFlashing(bossId) {
@@ -2951,8 +2974,9 @@ tbody tr:last-child td { border-bottom: none; }
             if(ocrBadgeDiagnostics.length)ocrBadgeDiagnostics[ocrBadgeDiagnostics.length-1].boss=name;
             const event=jstCrossActivity();
             const reason=!cfg?'未入库':!killed?'缺少击退时间':!spawn?'无法计算刷新时间':times.length>2?'时间列不明确':mismatch?`间隔不匹配（截图 ${diff.toFixed(2)}h / 配置 ${hours}h）`:scope==='cross'&&(!event.active||Date.parse(spawn)>=crossEventEndMs(event.id))?'超过跨服活动截止时间':computed?'根据刷新间隔自动补齐':'校验通过';
-            const safe=!!cfg&&!!killed&&!!spawn&&!mismatch&&times.length<=2&&(scope!=='cross'||(event.active&&Date.parse(spawn)<crossEventEndMs(event.id)))&&n.score>.8;
-            rows.push({name,raw:nameOriginal,killed,spawn,scope,checked:safe,reason,valid:safe,autoCross:badge});
+            const futureKill=Number.isFinite(Date.parse(killed))&&Date.parse(killed)>Date.now()+10*60000;
+            const safe=!!cfg&&!!killed&&!!spawn&&!mismatch&&!futureKill&&times.length<=2&&(scope!=='cross'||(event.active&&Date.parse(spawn)<crossEventEndMs(event.id)))&&n.score>.8;
+            rows.push({name,raw:nameOriginal,killed,spawn,scope,checked:safe,reason:futureKill?'击退时间晚于当前时间，请核对':reason,valid:safe,autoCross:badge});
         });
         // Keep only the newest defeatedAt for each Boss + scope + current mode.
         // Keep uncertain newest record rather than silently substituting an older entry.
@@ -3066,16 +3090,18 @@ tbody tr:last-child td { border-bottom: none; }
         ocrMessage('');
         if(e.target.dataset.ocrCheck!==undefined){row.checked=e.target.checked;}
         else {row.scope=e.target.value;
-            const act=jstCrossActivity();
-            if(row.scope==='cross'&&(!act.active||Date.parse(row.spawn)>=crossEventEndMs(act.id))){row.checked=false;row.reason='当前不在跨服活动时间或超过01:00截止';row.valid=false;}
-            else if(row.scope==='local'&&row.killed&&row.spawn&&ocrCatalogMatch(row.name)){
-                const cfg=ocrCatalogMatch(row.name),dif=(Date.parse(row.spawn)-Date.parse(row.killed))/3600000;
-                row.valid=Number.isFinite(dif)&&Math.abs(dif-Number(cfg.interval))<1/120;
-                row.reason=row.valid?'校验通过':'时间间隔不匹配，请核对';
-                row.checked=row.valid;
-            }else if(row.scope==='cross'&&row.killed&&row.spawn&&ocrCatalogMatch(row.name)){
-                row.valid=true;row.reason='已手动选择跨服，请核对徽章';row.checked=true;
-            }
+            const act=jstCrossActivity(),cfg=ocrCatalogMatch(row.name);
+            const kill=Date.parse(row.killed||''),spawn=Date.parse(row.spawn||'');
+            const hours=Number(cfg?.interval);
+            const intervalOk=Number.isFinite(kill)&&Number.isFinite(spawn)&&
+                Number.isFinite(hours)&&hours>0&&Math.abs((spawn-kill)/3600000-hours)<1/120;
+            const activityOk=row.scope!=='cross'||(act.active&&spawn<crossEventEndMs(act.id));
+            const futureKill=Number.isFinite(kill)&&kill>Date.now()+10*60000;
+            row.valid=!!cfg&&intervalOk&&activityOk&&!futureKill;
+            row.checked=row.valid;
+            row.reason=!cfg?'未入库':!Number.isFinite(kill)?'缺少击退时间':
+                !Number.isFinite(spawn)?'缺少有效刷新时间':!intervalOk?'时间间隔不匹配，请核对':
+                !activityOk?'不在当前跨服活动或超过日本时间01:00截止':futureKill?'击退时间晚于当前时间，请核对':'校验通过（已手动选择类型）';
             ocrRenderRows();}
     });
     window.ocrOpen=ocrOpen;window.ocrClose=ocrClose;window.ocrRun=ocrRun;window.ocrSubmit=ocrSubmit;
@@ -3150,22 +3176,13 @@ tbody tr:last-child td { border-bottom: none; }
     window.toggleMoreMenu = toggleMoreMenu; window.toggleRowMenu = toggleRowMenu;
     window.togglePasteFloat = togglePasteFloat; window.syncFabClick = syncFabClick;
 
-    // 多标签页防重：监听其他标签页的播报广播，收到后同步「已播报」标记，避免同一 Boss 被播报两遍
-    window.addEventListener('storage', function(e) {
-        if (e.key === 'bossData_speak_broadcast' && e.newValue) {
-            try {
-                const data = JSON.parse(e.newValue);
-                if (data && data.key) {
-                    const sep = data.key.indexOf('|');
-                    if (sep > 0) {
-                        const m = data.key.slice(0, sep);
-                        if (m === mode) remindedBosses.add(data.key.slice(sep + 1));
-                        else remindedOther.add(data.key);
-                        saveData();
-                        renderTable();
-                    }
-                }
-            } catch (err) { /* ignore */ }
+    // Sync the precise spawn-cycle marker across browser tabs (no permanent ID suppression).
+    window.addEventListener('storage',function(e){
+        if(e.key===REMINDER_HISTORY_KEY&&e.newValue){
+            try{for(const [k,v] of JSON.parse(e.newValue))if(!spokenCycles.has(k))spokenCycles.set(k,v);}catch(_){}
+        }
+        if(e.key==='bossData_speak_broadcast'&&e.newValue){
+            try{const d=JSON.parse(e.newValue);if(d.v===445&&d.key){spokenCycles.set(d.key,d.at);speakQueue=speakQueue.filter(q=>q.key!==d.key);}}catch(_){}
         }
     });
 

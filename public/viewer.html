@@ -82,11 +82,13 @@ body.mode-merge tr.merge-new,body.mode-merge tr.merge-old {background:transparen
 .count,.count.soon,.count.due,.count.muted {color:#e8eef9 !important;}
 #list tr.boss-past .count {color:#9299a8 !important;}
 @media(max-width:650px){.wrap{padding:12px 10px;}}
+
 </style></head><body class="mode-new"><div class="wrap">
 <header><div><h1>⚔️ Boss 刷新</h1><div class="status" id="status">正在连接云端…</div></div><div class="tools"><button id="newBtn" class="active" onclick="selectMode('new')">🆕 新区</button><button id="oldBtn" class="old" onclick="selectMode('old')">🕰️ 老区</button><button id="mergeBtn" onclick="selectMode('merge')">📊 合并查看</button><button onclick="loadBoth()">↻ 刷新</button></div></header>
 <div class="remindBar"><div class="remindTools"><span class="bar" id="clock">🇨🇳 北京 --:--:--</span><label>🔔 提前</label><select id="advance"><option value="1000">倒计时结束后</option><option value="60000">1 分钟</option><option value="120000">2 分钟</option><option value="180000">3 分钟</option><option value="300000">5 分钟</option></select><label>🔊 音量</label><input type="range" min="0" max="100" value="70" id="volume"><span id="volumeText" class="minor">70%</span></div><div class="remindTools"><span class="minor" id="remindState">提醒已开启 · 请测试声音</span><button id="toggleBtn" onclick="toggleAlerts()">⏸ 暂停</button><button onclick="testAlert()">🔔 测试声音</button></div></div>
 <div class="summary" id="summary">新区、老区均每 60 秒检查云端；浏览器允许播放声音后才会播报</div><div class="panel"><table><thead><tr><th>地区</th><th>Boss</th><th>下次刷新（北京时间）</th><th>倒计时</th><th>状态 / 几率</th></tr></thead><tbody id="list"></tbody></table></div>
 <footer>好友只读模式 · 保留语音与到点提示 · 无法编辑或上传。请保持网页打开并避免让电脑休眠；浏览器在后台可能延迟提醒。</footer></div><div id="glass" class="glass" role="status"></div>
+
 <script>
 'use strict';
 const ZONE='Asia/Shanghai'; let mode='new';const records={new:[],old:[]};let meta={new:{},old:{}};let enabled=true;let audioCtx=null;let voiceQueue=[];let speaking=false;let lastError='';
@@ -111,10 +113,11 @@ function updateSettingView(){document.getElementById('volumeText').textContent=d
 function toggleAlerts(){enabled=!enabled;updateSettingView();saveSettings();if(enabled)unlockAudio();}
 function unlockAudio(){try{audioCtx ||= new(window.AudioContext||window.webkitAudioContext)();if(audioCtx.state==='suspended')audioCtx.resume();}catch(e){console.warn(e)}}
 function sound(){try{unlockAudio();if(!audioCtx)return;const vol=Number(document.getElementById('volume').value)/100;if(!vol)return;const t=audioCtx.currentTime;[880,1100,880,1100,880].forEach((f,i)=>{const osc=audioCtx.createOscillator(),g=audioCtx.createGain();osc.type='sine';osc.frequency.value=f;g.gain.setValueAtTime(Math.max(.0001,vol*.20),t+i*.19);g.gain.exponentialRampToValueAtTime(.0001,t+i*.19+.15);osc.connect(g);g.connect(audioCtx.destination);osc.start(t+i*.19);osc.stop(t+i*.19+.15);});}catch(e){console.warn(e)}}
-function enqueueSpeech(text){if(!('speechSynthesis' in window))return;voiceQueue.push(text);processVoice();}
-function processVoice(){if(speaking||!voiceQueue.length)return;speaking=true;const text=voiceQueue.shift();try{const u=new SpeechSynthesisUtterance(text);u.lang='zh-CN';u.rate=.9;u.volume=Number(document.getElementById('volume').value)/100;let done=false;const finish=()=>{if(done)return;done=true;speaking=false;setTimeout(processVoice,180)};u.onend=finish;u.onerror=finish;speechSynthesis.speak(u);setTimeout(finish,12000)}catch(e){speaking=false;processVoice()}}
+function enqueueSpeech(text,key=''){if(!('speechSynthesis' in window))return;voiceQueue.push({text,key});processVoice();}
+function processVoice(){if(speaking||!voiceQueue.length)return;speaking=true;const task=voiceQueue.shift();if(task.key&&!activeVoiceKeys().has(task.key)){speaking=false;setTimeout(processVoice,0);return;}const text=task.text;try{const u=new SpeechSynthesisUtterance(text);u.lang='zh-CN';u.rate=.9;u.volume=Number(document.getElementById('volume').value)/100;let done=false;const finish=()=>{if(done)return;done=true;speaking=false;setTimeout(processVoice,180)};u.onend=finish;u.onerror=finish;speechSynthesis.speak(u);setTimeout(finish,12000)}catch(e){speaking=false;processVoice()}}
 function glass(text){const x=document.getElementById('glass');x.textContent=text;x.classList.add('show');clearTimeout(glass.timer);glass.timer=setTimeout(()=>x.classList.remove('show'),7000)}
-function fire(m,b,testing=false){sound();const title=(m==='new'?'新区 ':'老区 ')+(b.scope==='cross'?'跨服 ':'')+b.name;glass('🔔 '+title+' · 即将刷新');enqueueSpeech(title+'，即将刷新！');if(!testing&&'Notification'in window&&Notification.permission==='granted'){try{new Notification(title,{body:'Boss 即将刷新',tag:'boss-'+m+'-'+b.id})}catch{}}}
+function activeVoiceKeys(){const lead=Number(document.getElementById('advance').value)||1000;const keys=new Set();for(const m of ['new','old'])for(const b of visibleRecords(m)){const t=timeVal(b.time);if(Number.isFinite(t))keys.add(m+'|'+(b.scope==='cross'?'cross':'local')+'|'+(b.id||b.name)+'|'+t+'|'+lead+'|'+(b.scope==='cross'?b.activityId||'':''));}return keys;}
+function fire(m,b,testing=false,key=''){sound();const title=(m==='new'?'新区 ':'老区 ')+(b.scope==='cross'?'跨服 ':'')+b.name;glass('🔔 '+title+' · 即将刷新');enqueueSpeech(title+'，即将刷新！',key);if(!testing&&'Notification'in window&&Notification.permission==='granted'){try{new Notification(title,{body:'Boss 即将刷新',tag:'boss-'+m+'-'+b.id})}catch{}}}
 function testAlert(){unlockAudio();fire(mode,{name:'提醒测试',id:'test'},true);document.getElementById('remindState').textContent='🔊 已触发测试；如无声音请检查浏览器静音/系统音量';}
 function checkAlerts(){
  if(!enabled)return;
@@ -122,23 +125,23 @@ function checkAlerts(){
  const existing=new Set();
  for(const m of ['new','old'])for(const b of visibleRecords(m)){
    const t=timeVal(b.time);if(!Number.isFinite(t))continue;
-   const key=m+'|'+(b.id||b.name)+'|'+t;existing.add(key);
+   const key=m+'|'+(b.scope==='cross'?'cross':'local')+'|'+(b.id||b.name)+'|'+t+'|'+lead+'|'+(b.scope==='cross'?b.activityId||'':'');existing.add(key);
    if(seen.has(key)||pendingDue.has(key))continue;
    const diff=t-now;
    if(onDue ? diff<=3000&&diff>=-3000 : diff<=lead&&diff>=lead-5000){
      // 提前 3 秒登记，刷新时间到达后才开始语音；多个同时到点都可入语音队列。
      if(onDue&&diff>0)pendingDue.set(key,{m,b,t});
-     else {seen.set(key,now);fire(m,b)}
+     else {seen.set(key,now);fire(m,b,false,key)}
    }
  }
  for(const [key,item] of pendingDue){
    if(!existing.has(key)){pendingDue.delete(key);continue;}
-   if(now>=item.t){pendingDue.delete(key);if(!seen.has(key)){seen.set(key,now);fire(item.m,item.b)}}
+   if(now>=item.t){pendingDue.delete(key);if(!seen.has(key)&&existing.has(key)){seen.set(key,now);fire(item.m,item.b,false,key)}}
  }
  if(seen.size>600)for(const [k,v] of seen)if(now-v>86400000)seen.delete(k);
 }
 
-async function loadBoth(){const el=document.getElementById('status');el.textContent='⏳ 正在更新新区和老区…';const results=await Promise.allSettled(['new','old'].map(async m=>{const resp=await fetch('/api/boss?mode='+m,{cache:'no-store'});if(!resp.ok)throw new Error(m+' HTTP '+resp.status);const data=await resp.json();records[m]=Array.isArray(data.bosses)?data.bosses:[];crossRecords[m]=Array.isArray(data._crossBosses)?data._crossBosses:[];meta[m]={catalog:Array.isArray(data._catalog?.bosses)?data._catalog.bosses:[],updatedAt:data.updatedAt||''};}));let failures=results.map((r,i)=>r.status==='rejected'?(['new','old'][i]+': '+r.reason.message):'').filter(Boolean);lastError=failures.join('; ');el.classList.toggle('error',!!failures.length);el.textContent=failures.length?'⚠️ '+lastError:'✅ 新区、老区云端数据已连接 · 北京时间';render();}
+async function loadBoth(){const el=document.getElementById('status');el.textContent='⏳ 正在更新新区和老区…';const results=await Promise.allSettled(['new','old'].map(async m=>{const resp=await fetch('/api/boss?mode='+m,{cache:'no-store'});if(!resp.ok)throw new Error(m+' HTTP '+resp.status);const data=await resp.json();records[m]=Array.isArray(data.bosses)?data.bosses:[];crossRecords[m]=Array.isArray(data._crossBosses)?data._crossBosses:[];meta[m]={catalog:Array.isArray(data._catalog?.bosses)?data._catalog.bosses:[],updatedAt:data.updatedAt||''};}));let failures=results.map((r,i)=>r.status==='rejected'?(['new','old'][i]+': '+r.reason.message):'').filter(Boolean);lastError=failures.join('; ');el.classList.toggle('error',!!failures.length);el.textContent=failures.length?'⚠️ '+lastError:'✅ 新区、老区云端数据已连接 · 北京时间';voiceQueue=voiceQueue.filter(q=>!q.key||activeVoiceKeys().has(q.key));render();}
 function jstCrossActivity(time=Date.now()){const d=new Date(time+9*3600000),day=d.getUTCDay(),h=d.getUTCHours();const active=[1,3,5].includes(day)||([2,4,6].includes(day)&&h<1);if([2,4,6].includes(day)&&h<1)d.setUTCDate(d.getUTCDate()-1);return {active,id:active?d.toISOString().slice(0,10):null}}
 const crossRecords={new:[],old:[]};
 function crossEventEndMs(id){return /^\d{4}-\d{2}-\d{2}$/.test(String(id||''))?Date.parse(id+'T00:00:00+09:00')+25*3600000:NaN;}
@@ -182,4 +185,41 @@ function render(){
  document.getElementById('summary').textContent=(merged?'新区＋老区合并':mode==='new'?'新区':'老区')+' · '+items.length+' 条 Boss · 🔵 蓝色名称为下一个即将刷新 · 灰色为已过期 · 🔴 100% 必刷 · 每60秒读取云端 · 跨服活动 JST 周二／四／六01:00自动退出 · 只读';
 }
 document.getElementById('volume').addEventListener('input',()=>{updateSettingView();saveSettings()});document.getElementById('advance').addEventListener('change',saveSettings);settingsInit();loadBoth();setInterval(()=>{render();checkAlerts()},1000);setInterval(loadBoth,60000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)loadBoth()});
+
+// V4.4.7: 好友版新版本自动强制刷新，无需用户操作。
+// 每次发布新版都要同步提升 public/version.json 的 viewer 版本号。
+const VIEWER_BUILD='4.4.7';
+let versionRequestBusy=false;
+function isNewerViewerBuild(remote,local){
+ const a=remote.split('.').map(Number), b=local.split('.').map(Number);
+ for(let i=0;i<3;i++){if(a[i]!==b[i])return a[i]>b[i];}
+ return false;
+}
+async function checkViewerUpdate(){
+ if(versionRequestBusy)return;
+ versionRequestBusy=true;
+ try{
+  const response=await fetch('/version.json?check='+Date.now(),{cache:'no-store'});
+  if(!response.ok)return;
+  const data=await response.json();
+  const latest=String(data.viewer||'').trim();
+  if(!/^\d+\.\d+\.\d+$/.test(latest)||!isNewerViewerBuild(latest,VIEWER_BUILD))return;
+  // 防止边缘节点暂未同步页面时反复重载：相同版本最多两分钟刷新一次。
+  const key='boss_viewer_autoreload_v1', now=Date.now();
+  try{
+   const old=JSON.parse(sessionStorage.getItem(key)||'null');
+   if(old&&old.version===latest&&now-Number(old.at)<120000)return;
+   sessionStorage.setItem(key,JSON.stringify({version:latest,at:now}));
+  }catch(e){/* 禁用会话存储的浏览器仍可尝试刷新 */}
+  // query 参数确保浏览器向 Cloudflare 取新的 HTML；同源 localStorage 设置不会被清除。
+  const target=new URL(location.href);
+  target.searchParams.set('v',latest);
+  target.searchParams.set('refresh',String(now));
+  location.replace(target.href);
+ }catch(e){/* 网络暂不可用：下一轮重试，不干扰计时 */}
+ finally{versionRequestBusy=false;}
+}
+setTimeout(checkViewerUpdate,3000);
+setInterval(checkViewerUpdate,60000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkViewerUpdate();});
 </script></body></html>
