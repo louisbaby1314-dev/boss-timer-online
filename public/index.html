@@ -1443,24 +1443,29 @@ tbody tr:last-child td { border-bottom: none; }
         } catch (e) {}
     }
 
-    function speakBossAlert(bossName, alertMode, isCross=false, onStarted=null) {
+    function speakBossAlert(bossName, alertMode, isCross=false, onStarted=null, onFinished=null) {
+        let settled=false, started=false;
+        const finish=ok=>{
+            if(settled)return;
+            settled=true;clearTimeout(window.__speakGuard);
+            isSpeaking=false;
+            if(onFinished)onFinished(ok && started);
+            if(speakQueue.length)setTimeout(processSpeakQueue,250);
+        };
         try {
-            if ('speechSynthesis' in window) {
-                const prefix=(alertMode||mode)==='new'?'新区 ':'老区 ';
-                // 本服沿用原播报；跨服明确增加“跨服”前缀。
-                const text=prefix+(isCross?'跨服 ':'')+bossName+'，即将刷新！';
-                const utterance=new SpeechSynthesisUtterance(text);
-                utterance.lang='zh-CN';utterance.rate=.85;utterance.pitch=1.05;
-                utterance.volume=Number(volumeSlider.value)/100;
-                let advanced=false;
-                const advance=()=>{if(advanced)return;advanced=true;clearTimeout(window.__speakGuard);isSpeaking=false;if(speakQueue.length)setTimeout(processSpeakQueue,400);};
-                utterance.onstart=()=>{if(onStarted)onStarted();};
-                utterance.onend=advance;utterance.onerror=advance;
-                window.speechSynthesis.speak(utterance);
-                clearTimeout(window.__speakGuard);
-                window.__speakGuard=setTimeout(advance,20000);
-            } else isSpeaking=false;
-        } catch(e){isSpeaking=false;if(speakQueue.length)setTimeout(processSpeakQueue,500);}
+            if (!('speechSynthesis' in window)) { finish(false);return; }
+            const prefix=(alertMode||mode)==='new'?'新区 ':'老区 ';
+            const text=prefix+(isCross?'跨服 ':'')+bossName+'，即将刷新！';
+            const utterance=new SpeechSynthesisUtterance(text);
+            utterance.lang='zh-CN';utterance.rate=.85;utterance.pitch=1.05;
+            utterance.volume=Number(volumeSlider.value)/100;
+            utterance.onstart=()=>{started=true;if(onStarted)onStarted();};
+            utterance.onend=()=>finish(true);
+            utterance.onerror=()=>finish(false);
+            window.speechSynthesis.speak(utterance);
+            clearTimeout(window.__speakGuard);
+            window.__speakGuard=setTimeout(()=>finish(false),20000);
+        } catch(e){console.warn('语音启动失败',e);finish(false);}
     }
 
     // 当前区 + 另一区 的 Boss 全量（另一区实时读 localStorage，保证数据最新）
@@ -1520,6 +1525,7 @@ tbody tr:last-child td { border-bottom: none; }
             retireStaleSpeakTasks();
         }catch(e){console.warn('另一区提醒同步失败',e)}
     }
+    refreshOtherZoneForAlerts(); // Open the other zone before its first one-minute reminder window.
     setInterval(refreshOtherZoneForAlerts,60000);
     setInterval(retireStaleSpeakTasks,10000);
     document.addEventListener('visibilitychange',()=>{if(!document.hidden){refreshOtherZoneForAlerts();retireStaleSpeakTasks();}});
@@ -1541,14 +1547,22 @@ tbody tr:last-child td { border-bottom: none; }
             if(speakQueue.length)setTimeout(processSpeakQueue,10);return;
         }
         isSpeaking=true;
-        // Mark at actual utterance start rather than at queue insertion.
+        // Only a completed speech counts as delivered; failed utterances retry at most twice.
         speakBossAlert(item.name,item.mode,!!item.cross,()=>{
-            if(!spokenCycles.has(item.key)){
-                markCycleSpoken(item.key);
-                if(item.mode===mode&&!item.cross)remindedBosses.add(item.id);
-                else remindedOther.add(item.key);
-                showDueGlass(item.name,item.mode);
-                renderTable();
+            showDueGlass(item.name,item.mode);
+        },(success)=>{
+            if(success){
+                if(!spokenCycles.has(item.key)){
+                    markCycleSpoken(item.key);
+                    if(item.mode===mode&&!item.cross)remindedBosses.add(item.id);
+                    else remindedOther.add(item.key);
+                    renderTable();
+                }
+            }else if((item.retries||0)<2 && reminderEnabled &&
+                     getAllRemindableBosses().some(b=>reminderCycleKey(b,item.lead)===item.key)){
+                speakQueue.push({...item,retries:(item.retries||0)+1,notBefore:Date.now()+1200});
+            }else{
+                console.warn('本轮语音播放失败，已停止重试:',item.name,item.key);
             }
         });
     }
@@ -1605,7 +1619,7 @@ tbody tr:last-child td { border-bottom: none; }
     }
 
     function renderTable() {
-        if (!bosses.length) {
+        if (!bosses.length && !visibleCrossBosses().length) {
             tbody.innerHTML = `<tr><td colspan="6" class="empty-state">暂无Boss，点击 "新增Boss" 添加</td></tr>`;
             bossCountSpan.textContent = '0';
             return;
@@ -1613,7 +1627,10 @@ tbody tr:last-child td { border-bottom: none; }
 
         const now = new Date();
         const remindMs = parseInt(remindMinutesSelect.value) || 0;
-        const sorted = [...bosses].sort((a, b) => {
+        // Keep local and active cross-server records in ONE chronological list.
+        // Cross entries remain independent and do not gain local-only controls.
+        const sorted = [...bosses.map(b => ({...b, _crossRow:false})),
+                        ...visibleCrossBosses().map(b => ({...b, _crossRow:true}))].sort((a, b) => {
             const ta = new Date(a.time);
             const tb = new Date(b.time);
             if (!isNaN(ta) && isNaN(tb)) return -1;
@@ -1625,11 +1642,19 @@ tbody tr:last-child td { border-bottom: none; }
         for (const sb of sorted) {
             const st = new Date(sb.time);
             if (isNaN(st)) continue;
-            if (st.getTime() > now.getTime()) { soonId = sb.id; break; }
+            if (st.getTime() > now.getTime()) { soonId = sb._crossRow ? null : sb.id; break; }
         }
 
         let html = '';
         for (const b of sorted) {
+            if (b._crossRow) {
+                const t=Date.parse(b.time),diff=t-now.getTime();
+                let count='—';
+                if(Number.isFinite(t)) count=diff<0?'已过':`${Math.floor(diff/3600000)}h ${String(Math.floor((diff%3600000)/60000)).padStart(2,'0')}m ${String(Math.floor((diff%60000)/1000)).padStart(2,'0')}s`;
+                const pastStyle = Number.isFinite(t) && diff < -60000 ? 'opacity:.55;' : '';
+                html+=`<tr class="cross-row" data-cross-time="${htmlEscape(b.time)}" style="background:rgba(139,92,246,.07);${pastStyle}"><td>${htmlEscape(b.zone||'')}</td><td>${htmlEscape(b.name)} <span style="color:#c4b5fd;font-weight:700;margin-left:10px;font-size:12px">🟣 跨服</span></td><td>—</td><td>${htmlEscape(formatTimeByZone(b.time))}</td><td class="cross-countdown">${htmlEscape(count)}</td><td>入侵活动</td></tr>`;
+                continue;
+            }
             const rawTarget = new Date(b.time);
             const isInvalid = isNaN(rawTarget);
             const diffMs = rawTarget - now;
@@ -1724,13 +1749,8 @@ tbody tr:last-child td { border-bottom: none; }
             `;
         }
 
-        cleanCross();
-        if(jstCrossActivity().active){for(const b of visibleCrossBosses()){const t=Date.parse(b.time),diff=t-Date.now();
-            let count='—';if(Number.isFinite(t))count=diff<0?'已过':`${Math.floor(diff/3600000)}h ${String(Math.floor(diff%3600000/60000)).padStart(2,'0')}m ${String(Math.floor(diff%60000/1000)).padStart(2,'0')}s`;
-            html+=`<tr class="cross-row" style="background:rgba(139,92,246,.07)"><td>${htmlEscape(b.zone||'')}</td><td>${htmlEscape(b.name)} <span style="color:#c4b5fd;font-weight:700;margin-left:10px;font-size:12px">🟣 跨服</span></td><td>—</td><td>${htmlEscape(formatTimeByZone(b.time))}</td><td>${htmlEscape(count)}</td><td>入侵活动</td></tr>`;
-        }}
         tbody.innerHTML = html;
-        bossCountSpan.textContent = sorted.length+visibleCrossBosses().length;
+        bossCountSpan.textContent = sorted.length;
     }
 
     function updateCountdownOnly() {
@@ -1789,6 +1809,16 @@ tbody tr:last-child td { border-bottom: none; }
                     countdownTd.classList.remove('text-muted');
                 }
             }
+        });
+        // Cross-server rows use the same live clock update as local rows.
+        tbody.querySelectorAll('tr.cross-row[data-cross-time]').forEach(row => {
+            const t = Date.parse(row.getAttribute('data-cross-time') || '');
+            const countEl = row.querySelector('.cross-countdown');
+            if(!countEl || !Number.isFinite(t)) return;
+            const diff = t - now.getTime();
+            row.style.opacity = diff < -60000 ? '0.55' : '';
+            if(diff < 0) countEl.textContent = '已过';
+            else countEl.textContent = `${Math.floor(diff/3600000)}h ${String(Math.floor((diff%3600000)/60000)).padStart(2,'0')}m ${String(Math.floor((diff%60000)/1000)).padStart(2,'0')}s`;
         });
     }
 
