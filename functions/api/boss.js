@@ -112,7 +112,7 @@ function uploadConflicts(incoming,old){
  for(const b of incoming.bosses||[]){
    const existing=matches.get(b.name);if(!existing)continue;
    const from=Date.parse(b.time||''),was=Date.parse(existing.time||'');
-   if(Number.isFinite(from)&&Number.isFinite(was)&&from<was)conflicts.push({name:b.name,reason:'本地刷新时间早于云端'});
+   if(Number.isFinite(from)&&Number.isFinite(was)&&from<was)conflicts.push({name:b.name,reason:'本地刷新时间早于云端',localTime:b.time,cloudTime:existing.time});
  }
  return conflicts;
 }
@@ -248,11 +248,14 @@ export async function onRequest({request,env}) {
         if(!oldRow||!data._expectedRevision||oldRow.updated_at!==data._expectedRevision)return json({error:'云端版本已变化，请重新检查后上传'},409);
         const old=JSON.parse(oldRow.payload);filterCross(old);
         const unsafe=uploadConflicts(data,old);
-        if(unsafe.length)return json({error:'发现旧本服数据可能覆盖云端：'+unsafe.map(x=>x.name).slice(0,8).join('、')},409);
+        // V4.5.3: an authenticated admin can explicitly confirm an older local timestamp.
+        // Never bypass the revision CAS or independent cross-edit conflict checks.
+        if(unsafe.length && data._forceOlderLocal!==true)
+          return json({error:'发现本服时间较云端旧，需在管理员上传窗口确认覆盖：'+unsafe.map(x=>x.name).slice(0,8).join('、')},409);
         const crossResult=prepareCrossUpload(data,old);
         if(crossResult.error)return json({error:crossResult.error},409);
         data._crossBosses=crossResult.records;
-        delete data._crossOps;delete data._expectedRevision;
+        delete data._crossOps;delete data._expectedRevision;delete data._forceOlderLocal;
         filterCross(data);
         await ensureUndoTable(env.BOSS_DB);
         const revision=new Date().toISOString()+'-'+crypto.randomUUID();
