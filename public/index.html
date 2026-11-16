@@ -1376,14 +1376,32 @@ tbody tr:last-child td { border-bottom: none; }
             const preview=await check.json().catch(()=>({}));
             if(!check.ok)throw new Error(preview.error||'安全检查失败 HTTP '+check.status);
             const conflicts=preview.conflicts||[];
+            // 正常上传静默通过。仅当本服本地时间早于云端时，询问是否明确覆盖；
+            // 取消时不上传，不能误报为上传成功。
+            let forceOlderLocal=false;
             if(conflicts.length){
-                const details=conflicts.slice(0,6).map(x=>x.name+'（'+x.reason+'）').join('、');
-                throw new Error('云端有较新的记录：'+details+'。本次未上传。请先下载云端数据后核对。');
+                const details=conflicts.slice(0,10).map(x=>
+                    '• '+x.name+'：'+x.reason+
+                    (x.cloudTime&&x.localTime?'（云端 '+formatTimeByZone(x.cloudTime)+' → 本地 '+formatTimeByZone(x.localTime)+'）':'')
+                ).join('\n');
+                const remaining=conflicts.length>10?'\n…另有 '+(conflicts.length-10)+' 条':'';
+                forceOlderLocal=confirm(
+                    '⚠️ 检测到 '+conflicts.length+' 条本服 Boss 的本地刷新时间早于云端：\n\n'
+                    +details+remaining+'\n\n'
+                    +'是否仍然用【当前本地数据】强制覆盖云端？\n'
+                    +'确认：上传当前区服的数据（包括这些较早时间）。\n'
+                    +'取消：保持云端不变。'
+                );
+                if(!forceOlderLocal){
+                    cloudStatus.textContent='↩️ 已取消上传';cloudStatus.className='cloud-status';
+                    showToast('已取消上传，云端数据未修改');
+                    return;
+                }
             }
-            // 正常上传无需二次确认；异常仍在下方 catch 中明确提示。
+            // 服务端必须再次验证 _expectedRevision，不允许确认期间的并发修改被覆盖。
             const response=await fetch('/api/boss?mode='+encodeURIComponent(uploadedMode),{
                 method:'PUT',credentials:'same-origin',headers:{'Content-Type':'application/json'},
-                body:JSON.stringify({...data,_expectedRevision:preview.revision})});
+                body:JSON.stringify({...data,_expectedRevision:preview.revision,_forceOlderLocal:forceOlderLocal})});
             const res=await response.json().catch(()=>({}));
             if(!response.ok){if(response.status===401){adminAuthenticated=false;updateCloudConnectionLabel();}
                 throw new Error(res.error||('HTTP '+response.status));}
