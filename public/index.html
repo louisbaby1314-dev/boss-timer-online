@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- V4.5.2: Cross-server mandatory 100% Boss styling matches local Boss -->
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -1100,6 +1101,7 @@ tbody tr:last-child td { border-bottom: none; }
     let timezone = 'japan';
     let bosses = [];
     let editingId = null;
+    let editingCrossId = null;
     let batchPending = [];
     let batchUpdatedNames = [];
     let reminderEnabled = true;
@@ -1239,7 +1241,8 @@ tbody tr:last-child td { border-bottom: none; }
                 const parsed = JSON.parse(stored);
                 if (parsed.bosses && Array.isArray(parsed.bosses) && parsed.bosses.length > 0) {
                     bosses = parsed.bosses.map(b => ({ ...b, prob: getDefaultProb(b.name), zone: b.zone || getZone(b.name) }));
-                    crossBosses = Array.isArray(parsed._crossBosses)?parsed._crossBosses:[];cleanCross();
+                    crossBosses = Array.isArray(parsed._crossBosses)?parsed._crossBosses:[];
+                    pendingCrossOps=Array.isArray(parsed._crossOps)?parsed._crossOps:[];cleanCross();
                     remindedBosses = new Set(parsed._remindedBosses || []);
                     stoppedFlashing = new Set(parsed._stoppedFlashing || []);
                     remindedOther = new Set(parsed._remindedOther || []);
@@ -1258,6 +1261,7 @@ tbody tr:last-child td { border-bottom: none; }
         const dataToSave = {
             bosses: bosses,
             _crossBosses: crossBosses,
+            _crossOps: pendingCrossOps,
             _remindedBosses: Array.from(remindedBosses),
             _stoppedFlashing: Array.from(stoppedFlashing),
             _remindedOther: Array.from(remindedOther),
@@ -1323,7 +1327,7 @@ tbody tr:last-child td { border-bottom: none; }
         modeLabel.style.color = newMode === 'new' ? '#60a5fa' : '#fbbf24';
         appEl.className = 'app mode-' + newMode;
 
-        crossBosses=[];
+        crossBosses=[];pendingCrossOps=[];
         if (!loadData()) {
             bosses = DEFAULT_BOSSES.map(b => ({ ...b, id: b.id || 'b' + Date.now() + Math.random() }));
             saveData();
@@ -1360,9 +1364,11 @@ tbody tr:last-child td { border-bottom: none; }
     async function syncToCloud() {
         if(!uploadEnabled||!adminAuthenticated)return showToast('⚠️ 请先开启上传模式并登录管理员');
         const uploadedMode=mode;
+        const crossOpsAtStart=JSON.parse(JSON.stringify(pendingCrossOps));
+        const crossRowsAtStart=JSON.stringify(crossBosses);
         cloudStatus.textContent='⏳ 上传安全检查中…';cloudStatus.className='cloud-status syncing';
         try {
-            const data={bosses:bosses,_crossBosses:crossBosses,_catalog:{version:2,zones:ZONE_OPTIONS,bosses:DEFAULT_BOSSES},
+            const data={bosses:bosses,_crossBosses:crossBosses,_crossOps:crossOpsAtStart,_catalog:{version:2,zones:ZONE_OPTIONS,bosses:DEFAULT_BOSSES},
                 _remindedBosses:[...remindedBosses],_stoppedFlashing:[...stoppedFlashing],mode,updatedAt:new Date().toISOString()};
             // 当前云端版本校验，避免更新期间其他窗口/朋友同步覆盖；服务端也校验。
             const check=await fetch('/api/boss?action=upload-check&mode='+encodeURIComponent(uploadedMode),{
@@ -1381,6 +1387,11 @@ tbody tr:last-child td { border-bottom: none; }
             const res=await response.json().catch(()=>({}));
             if(!response.ok){if(response.status===401){adminAuthenticated=false;updateCloudConnectionLabel();}
                 throw new Error(res.error||('HTTP '+response.status));}
+            if(mode===uploadedMode && JSON.stringify(pendingCrossOps)===JSON.stringify(crossOpsAtStart)
+                && JSON.stringify(crossBosses)===crossRowsAtStart){
+                if(Array.isArray(res.crossBosses))crossBosses=res.crossBosses;
+                pendingCrossOps=[];crossBosses.forEach(b=>{delete b._localOnly;});saveData();renderTable();
+            }
             cloudStatus.textContent='✅ 已同步';cloudStatus.className='cloud-status synced';
             showToast('✅ 已上传到云端。如误上传，可从「更多」撤销上次云端上传。');
         }catch(e){cloudStatus.textContent='❌ 上传未完成';cloudStatus.className='cloud-status error';
@@ -1398,6 +1409,7 @@ tbody tr:last-child td { border-bottom: none; }
         }catch(e){alert('撤销失败：'+e.message);}
     }
     async function loadFromCloud() {
+        if(pendingCrossOps.length&&!confirm('存在未上传的跨服编辑／删除。下载云端数据会放弃这些本地修改，继续吗？'))return;
         cloudStatus.textContent='⏳ 下载中...';cloudStatus.className='cloud-status syncing';
         try {
             const response=await fetch('/api/boss?mode='+encodeURIComponent(mode),{cache:'no-store'});
@@ -1407,7 +1419,7 @@ tbody tr:last-child td { border-bottom: none; }
                 pushUndo('从云端下载');
                 if(record._catalog) applyCatalog(record._catalog);
                 bosses=record.bosses.map(b=>({...b,prob:getDefaultProb(b.name),zone:b.zone||getZone(b.name)}));
-                crossBosses=record._crossBosses||[];cleanCross();
+                crossBosses=record._crossBosses||[];pendingCrossOps=[];cleanCross();
                 remindedBosses=new Set(record._remindedBosses||[]);
                 stoppedFlashing=new Set(record._stoppedFlashing||[]);
                 saveData();renderTable();
@@ -1495,7 +1507,7 @@ tbody tr:last-child td { border-bottom: none; }
         const m=b._mode||b.mode||mode, cross=!!(b._cross||b.cross||b.scope==='cross');
         const t=Date.parse(b.time||'');
         if (!Number.isFinite(t)) return '';
-        return [m, cross?'cross':'local', String(b.id||b.name), String(t),
+        return [m, cross?'cross':'local', cross?String(b.name):String(b.id||b.name), String(t),
           String(reminderLead),cross?String(b.activityId||'unknown'):''].join('|');
     }
     function pruneReminderHistory(){
@@ -1642,7 +1654,7 @@ tbody tr:last-child td { border-bottom: none; }
         for (const sb of sorted) {
             const st = new Date(sb.time);
             if (isNaN(st)) continue;
-            if (st.getTime() > now.getTime()) { soonId = sb._crossRow ? null : sb.id; break; }
+            if (st.getTime() > now.getTime()) { soonId = sb.id; break; }
         }
 
         let html = '';
@@ -1652,7 +1664,24 @@ tbody tr:last-child td { border-bottom: none; }
                 let count='—';
                 if(Number.isFinite(t)) count=diff<0?'已过':`${Math.floor(diff/3600000)}h ${String(Math.floor((diff%3600000)/60000)).padStart(2,'0')}m ${String(Math.floor((diff%60000)/1000)).padStart(2,'0')}s`;
                 const pastStyle = Number.isFinite(t) && diff < -60000 ? 'opacity:.55;' : '';
-                html+=`<tr class="cross-row" data-cross-time="${htmlEscape(b.time)}" style="background:rgba(139,92,246,.07);${pastStyle}"><td>${htmlEscape(b.zone||'')}</td><td>${htmlEscape(b.name)} <span style="color:#c4b5fd;font-weight:700;margin-left:10px;font-size:12px">🟣 跨服</span></td><td>—</td><td>${htmlEscape(formatTimeByZone(b.time))}</td><td class="cross-countdown">${htmlEscape(count)}</td><td>入侵活动</td></tr>`;
+                // Cross-server Bosses share the exact same catalog probability and mandatory styling as local Bosses.
+                const prob = Number(getDefaultProb(b.name));
+                const isFull = prob === 100;
+                const crossRowStyle = isFull
+                    ? 'background:linear-gradient(90deg, rgba(232,105,105,.20), rgba(232,105,105,.10) 70%, rgba(232,105,105,.05)); border-left:3px solid #d98282;'
+                    : 'background:rgba(139,92,246,.07);';
+                const probStyle = isFull ? 'style="color:#e58b8b;font-weight:bold;"' : '';
+                const fullBadge = isFull ? '<span class="badge badge-danger" style="margin-left:5px;">必刷</span>' : '';
+                html+=`<tr class="cross-row" data-cross-time="${htmlEscape(b.time)}" style="${crossRowStyle}${pastStyle}"><td>${htmlEscape(getZone(b.name,b.zone))}</td><td class="boss-name ${b.id===soonId?'boss-soon':''}" data-cross-id="${htmlEscape(b.id)}">${htmlEscape(b.name)} <span style="color:#c4b5fd;font-weight:700;margin-left:10px;font-size:12px">🟣 跨服</span></td><td><div class="actions">
+                    <button class="btn-sm kill" onclick="recordCrossKill('${b.id}')" title="跨服记录击杀">⚔️</button>
+                    <button class="btn-sm delay" onclick="delayCrossBoss('${b.id}')" title="跨服顺延刷新">⟳</button>
+                    <div class="row-more">
+                      <button class="btn-sm row-more-btn" onclick="toggleRowMenu('${b.id}', event)" title="更多操作">⋯</button>
+                      <div class="row-menu" id="rowMenu_${b.id}">
+                        <button class="row-menu-item" onclick="editCrossBoss('${b.id}')">✎ 编辑跨服</button>
+                        <button class="row-menu-item danger" onclick="delCrossBoss('${b.id}')">🗑 删除跨服记录</button>
+                      </div>
+                    </div></div></td><td>${htmlEscape(formatTimeByZone(b.time))}</td><td class="cross-countdown">${htmlEscape(count)}</td><td>入侵活动 <span ${probStyle}>${htmlEscape(prob)}%</span>${fullBadge}</td></tr>`;
                 continue;
             }
             const rawTarget = new Date(b.time);
@@ -1757,7 +1786,7 @@ tbody tr:last-child td { border-bottom: none; }
         const now = new Date();
         // 未刷新 Boss 中最早到点的那个：名字变蓝（只高亮一个，每秒重算）
         let soonId = null, soonT = Infinity;
-        for (const sb of bosses) {
+        for (const sb of [...bosses,...visibleCrossBosses()]) {
             if (!sb.time) continue;
             const st = new Date(sb.time).getTime();
             if (isNaN(st) || st <= now.getTime()) continue;
@@ -1767,6 +1796,8 @@ tbody tr:last-child td { border-bottom: none; }
         rows.forEach(row => {
             const nameEl = row.querySelector('.boss-name');
             if (!nameEl) return;
+            const crossId=nameEl.getAttribute('data-cross-id');
+            if(crossId){nameEl.classList.toggle('boss-soon',crossId===soonId);return;}
             const bossId = nameEl.getAttribute('data-boss-id');
             const b = bosses.find(x => x.id === bossId);
             if (!b || !b.time) return;
@@ -1859,40 +1890,32 @@ tbody tr:last-child td { border-bottom: none; }
         showToast(`⟳ ${b.name} 已顺延 ${b.interval}h`);
     }
 
-    async function delayAllPastUnupdated() {
-        const now = new Date();
-        const updatedNames = new Set(batchUpdatedNames || []);
-        const delayList = bosses.filter(b => b.time && new Date(b.time) < now && !updatedNames.has(b.name) && b.interval > 0);
-        // Same current zone. Cross-server records use a different D1 storage path.
-        const crossDelayList = jstCrossActivity().active ? crossBosses.filter(b =>
-            crossVisible(b) && Date.parse(b.time) < now.getTime() && Number(b.interval) > 0) : [];
-        if (!delayList.length && !crossDelayList.length) return showToast('✅ 没有需要顺延的已过Boss');
-        if (!confirm(`发现本服 ${delayList.length} 只、跨服 ${crossDelayList.length} 只已过 Boss，确定顺延吗？\n跨服顺延超过次日日本时间01:00的记录将不再显示。`)) return;
-        let crossUpdated=0, crossHidden=0;
-        if(crossDelayList.length){
-            try{
-                const res=await fetch('/api/boss?action=cross-delay&mode='+encodeURIComponent(mode),{
-                    method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:'{}'});
-                const payload=await res.json();
-                if(!res.ok||!payload.ok)throw new Error(payload.error||'HTTP '+res.status);
-                crossBosses=payload.data._crossBosses||[];
-                crossUpdated=payload.updated||0;
-                crossHidden=payload.hidden||0;
-            }catch(e){return showToast('跨服顺延失败，本次没有修改本服：'+e.message);}
+    function delayAllPastUnupdated() {
+        const now=Date.now(),updatedNames=new Set(batchUpdatedNames||[]);
+        const local=bosses.filter(b=>b.time&&Date.parse(b.time)<now&&!updatedNames.has(b.name)&&Number(b.interval)>0);
+        const active=jstCrossActivity();
+        const cross=active.active?crossBosses.filter(b=>crossVisible(b)&&Date.parse(b.time)<now&&Number(b.interval)>0):[];
+        if(!local.length&&!cross.length)return showToast('✅ 没有需要顺延的已过Boss');
+        if(!confirm(`发现本服 ${local.length} 只、跨服 ${cross.length} 只已过 Boss，确定顺延吗？\n本次全部先更新本地，只有点悬浮上传才同步 D1。`))return;
+        pushUndo('批量顺延本服 '+local.length+'、跨服 '+cross.length+' 个 Boss');
+        let crossUpdated=0,crossHidden=0;
+        for(const b of local){
+            const step=Number(b.interval)*3600000,old=Date.parse(b.time);
+            b.time=new Date(old+step*(Math.floor((now-old)/step)+1)).toISOString();
+            remindedBosses.delete(b.id);stoppedFlashing.delete(b.id);
         }
-        if(delayList.length){
-            pushUndo('批量顺延本服 '+delayList.length+' 个 Boss');
-            for (const b of delayList) {
-                remindedBosses.delete(b.id);
-                stoppedFlashing.delete(b.id);
-                let next = new Date(b.time);
-                while (next <= now) next = new Date(next.getTime() + b.interval * 60 * 60 * 1000);
-                b.time = next.toISOString();
+        for(const b of cross){
+            const step=Number(b.interval)*3600000,old=Date.parse(b.time);
+            const next=old+step*(Math.floor((now-old)/step)+1),before={...b};
+            if(next>=crossEventEndMs(b.activityId)){
+                stageCrossChange(before,null);crossBosses=crossBosses.filter(x=>x.id!==b.id);crossHidden++;
+            }else{
+                b.time=new Date(next).toISOString();stageCrossChange(before,b);crossUpdated++;
             }
-            saveData();
+            invalidateCrossSpeakTask(b.id);
         }
-        renderTable();
-        showToast(`⟳ 已顺延本服 ${delayList.length} 只、跨服 ${crossUpdated} 只${crossHidden?'（其中 '+crossHidden+' 只超出活动结束时间，已隐藏）':''}`);
+        saveData();renderTable();
+        showToast(`⟳ 本地已顺延本服 ${local.length} 只、跨服 ${crossUpdated} 只${crossHidden?'，移除超出活动时间的跨服 '+crossHidden+' 只':''}。点击悬浮上传后才同步 D1。`);
     }
 
     // ★ 智能解析：兼容「截图 OCR 分块文本」与「一行一条记录」两种格式 ★
@@ -2285,6 +2308,7 @@ tbody tr:last-child td { border-bottom: none; }
     }
 
     function openAddModal() {
+        editingCrossId = null;
         editingId = null;
         modalTitle.textContent = '新增 Boss';
         inputName.value = ''; inputKillTime.value = ''; inputTime.value = '';
@@ -2295,6 +2319,7 @@ tbody tr:last-child td { border-bottom: none; }
     }
 
     function editBoss(id) {
+        editingCrossId = null;
         const b = bosses.find(x => x.id === id);
         if (!b) return;
         editingId = id;
@@ -2309,9 +2334,103 @@ tbody tr:last-child td { border-bottom: none; }
         modalOverlay.style.display = 'flex';
     }
 
-    function closeModal() { modalOverlay.style.display = 'none'; editingId = null; }
+    // Cross records are independent from local records, even for the same Boss name.
+    function crossOpSame(a,b){
+        if(!a&&!b)return true;if(!a||!b)return false;
+        return ['name','time','interval','zone','prob','activityId'].every(k=>String(a[k]??'')===String(b[k]??''));
+    }
+    function stageCrossChange(before,after){
+        // Keep the ORIGINAL cloud baseline across multiple local edits to the same record.
+        const id=before?.id||after?.id;
+        let i=pendingCrossOps.findIndex(x=>x.id===id);
+        const original=i>=0?pendingCrossOps[i].before:(before?JSON.parse(JSON.stringify(before)):null);
+        // OCR-only unsynced rows never existed in D1; do not create a false deletion.
+        const base=original?._localOnly?null:original;
+        const next=after?JSON.parse(JSON.stringify(after)):null;
+        if(next)delete next._localOnly;
+        if(crossOpSame(base,next)){
+            if(i>=0)pendingCrossOps.splice(i,1);
+            return;
+        }
+        if(!base&&!next){if(i>=0)pendingCrossOps.splice(i,1);return;}
+        const op={id,before:base,after:next,activityId:(base||next)?.activityId};
+        if(i>=0)pendingCrossOps[i]=op;else pendingCrossOps.push(op);
+    }
+    function crossById(id){return crossBosses.find(b=>b.id===id && crossVisible(b));}
+    function invalidateCrossSpeakTask(id){
+        speakQueue=speakQueue.filter(q=>!(q.cross && q.mode===mode && q.id===id));
+        retireStaleSpeakTasks();
+    }
+    function editCrossBoss(id){
+        const b=crossById(id);
+        if(!b)return showToast('跨服活动已结束，无法编辑过期记录');
+        editingId=null;editingCrossId=id;
+        modalTitle.textContent='编辑跨服 Boss';
+        inputName.value=b.name;inputKillTime.value='';
+        inputTime.value=isoToLocalInputValue(b.time);
+        inputInterval.value=b.interval||'';
+        inputProb.value=b.prob||getDefaultProb(b.name);
+        inputZone.value=b.zone||getZone(b.name)||ZONE_OPTIONS[0];
+        bossNameList.innerHTML=DEFAULT_BOSSES.map(x=>`<option value="${x.name}">`).join('');
+        modalOverlay.style.display='flex';
+    }
+    function saveCrossBoss(){
+        const b=crossById(editingCrossId);
+        if(!b)return showToast('跨服记录已失效，请重新识别');
+        const name=inputName.value.trim(),rawTime=inputTime.value;
+        const interval=Number(inputInterval.value),zone=inputZone.value||getZone(name)||'';
+        if(!name||!rawTime)return showToast('请填写完整 Boss 名称及刷新时间');
+        if(!Number.isFinite(interval)||interval<=0)return showToast('请输入有效的刷新间隔');
+        const cfg=DEFAULT_BOSSES.find(x=>x.name===name);
+        if(!cfg)return showToast('该 Boss 未入库，请先在 Boss／地区管理中配置');
+        const time=localTimeToISO(rawTime),t=Date.parse(time),end=crossEventEndMs(b.activityId);
+        if(!Number.isFinite(t)||!Number.isFinite(end))return showToast('刷新时间或活动日期无效');
+        if(t>=end)return showToast('⚠️ 该时间已超过本场跨服结束时间（日本时间次日 01:00），未保存');
+        const dup=crossBosses.find(x=>x.id!==b.id && x.activityId===b.activityId && x.name===name);
+        if(dup)return showToast('同一跨服活动中已存在「'+name+'」，请编辑现有记录');
+        pushUndo('编辑跨服「'+b.name+'」');
+        const before={...b};
+        Object.assign(b,{name,time,interval,zone,prob:getDefaultProb(name),scope:'cross'});
+        stageCrossChange(before,b);
+        invalidateCrossSpeakTask(b.id);
+        saveData();closeModal();renderTable();
+        showToast('✅ 跨服记录已更新到本地，点击悬浮上传按钮同步云端');
+    }
+    function delayCrossBoss(id){
+        const b=crossById(id);
+        if(!b)return showToast('跨服记录已失效');
+        const hours=Number(b.interval),t=Date.parse(b.time),end=crossEventEndMs(b.activityId);
+        if(!Number.isFinite(hours)||hours<=0||!Number.isFinite(t))return showToast('跨服刷新间隔或时间无效');
+        const next=t+hours*3600000;
+        if(next>=end)return showToast('该次顺延超过跨服结束时间，记录不变（活动结束自动隐藏）');
+        pushUndo('顺延跨服「'+b.name+'」');const before={...b};b.time=new Date(next).toISOString();
+        stageCrossChange(before,b);invalidateCrossSpeakTask(b.id);saveData();renderTable();
+        showToast('⟳ 跨服「'+b.name+'」已顺延 '+hours+'h（尚未上传）');
+    }
+    function recordCrossKill(id){
+        const b=crossById(id);
+        if(!b)return showToast('跨服记录已失效');
+        const hours=Number(b.interval),end=crossEventEndMs(b.activityId);
+        if(!Number.isFinite(hours)||hours<=0)return showToast('请先设置有效刷新间隔');
+        const next=Date.now()+hours*3600000;
+        if(next>=end)return showToast('本场跨服结束前已无法再次刷新，未修改');
+        pushUndo('跨服记录击杀「'+b.name+'」');const before={...b};b.time=new Date(next).toISOString();
+        stageCrossChange(before,b);invalidateCrossSpeakTask(b.id);saveData();renderTable();
+        showToast('⚔️ 跨服「'+b.name+'」已记录击杀（尚未上传）');
+    }
+    function delCrossBoss(id){
+        const b=crossById(id);if(!b)return showToast('跨服记录已失效');
+        if(!confirm('确定删除跨服「'+b.name+'」吗？\n不会影响同名本服 Boss。可使用撤销恢复。'))return;
+        pushUndo('删除跨服「'+b.name+'」');
+        stageCrossChange(b,null);crossBosses=crossBosses.filter(x=>x.id!==id);
+        invalidateCrossSpeakTask(id);saveData();renderTable();
+        showToast('🗑 已删除跨服记录（尚未上传，可撤销）');
+    }
+
+    function closeModal() { modalOverlay.style.display = 'none'; editingId = null; editingCrossId = null; }
 
     function saveBoss() {
+        if(editingCrossId)return saveCrossBoss();
         const name = inputName.value.trim();
         const rawTime = inputTime.value;
         const interval = parseInt(inputInterval.value);
@@ -2408,7 +2527,7 @@ tbody tr:last-child td { border-bottom: none; }
     function pushUndo(label) {
         try {
             const stack = JSON.parse(localStorage.getItem('bossData_undo_stack') || '[]');
-            stack.push({ label: label || '上一步操作', mode: mode, time: Date.now(), bosses: JSON.parse(JSON.stringify(bosses)), crossBosses: JSON.parse(JSON.stringify(crossBosses)) });
+            stack.push({ label: label || '上一步操作', mode: mode, time: Date.now(), bosses: JSON.parse(JSON.stringify(bosses)), crossBosses: JSON.parse(JSON.stringify(crossBosses)),crossOps:JSON.parse(JSON.stringify(pendingCrossOps)) });
             localStorage.setItem('bossData_undo_stack', JSON.stringify(stack.slice(-10)));
         } catch (e) { /* ignore */ }
         updateUndoState();
@@ -2429,13 +2548,14 @@ tbody tr:last-child td { border-bottom: none; }
 
             bosses = snap.bosses;
             if(Array.isArray(snap.crossBosses))crossBosses=snap.crossBosses;
+            pendingCrossOps=Array.isArray(snap.crossOps)?snap.crossOps:[];
             remindedBosses.clear();
             stoppedFlashing.clear();
             remindedOther.clear();
             // 直接写存储（不走 saveData，避免把恢复前的状态重新记入历史/撤销栈）
             const dataToSave = {
                 bosses: bosses,
-                _crossBosses: crossBosses,
+                _crossBosses: crossBosses, _crossOps:pendingCrossOps,
                 _remindedBosses: [], _stoppedFlashing: [], _remindedOther: [],
                 _timezone: timezone
             };
@@ -2812,7 +2932,7 @@ tbody tr:last-child td { border-bottom: none; }
 
 
     // ===== V4 local PaddleOCR and scoped cross-server updates =====
-    let ocrFile=null, ocrPreviewUrl=null, ocrEnginePromise=null, ocrRowsData=[],crossBosses=[];
+    let ocrFile=null, ocrPreviewUrl=null, ocrEnginePromise=null, ocrRowsData=[],crossBosses=[],pendingCrossOps=[];
     let ocrRunning=false, ocrQueued=false, ocrEpoch=0;
     const OCR_BADGE_TEMPLATE='data:image/png;base64,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';
     const OCR_BADGE_TEMPLATE_ALTERNATE='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACMAAAAsCAIAAABg7ZbbAAAPjklEQVRYCW3BCXCU130A8P/73nd/u9pd7UpCEkLoAMQpoRAHO7FNjGwMDvFBUuOmie3YqV0nGac4tts6biedadOkdTOJm05DTBzbTTrGxtwgIQQCjBRAgG6DDhArJHSuVtrju957/wqn08l0+vuRXc++19Bx1Ge+5/uGYTCfOZ7j+z4hBLlwPRcRBREgEAggAQkIoZJEJEIIIiAXVKYECRCglEpECgSDzGeUUsF51rbvrdz4yXT33p6PyK+++W5DxxEEdF1XUVUgwLhvZx1AFCiYYFwIRAQQCPNwHrlNIvMAAAkKlEBSVBkI0VVD1VTX8XRD9zzPse0Ny+p6J7v2dn9EfvnMOw2Xj0iS5Hou50IzFM657/me5wpAMQ85F4ILLkDolsI4ZzaXJIkAAQEEJJlSWVYIIVSilmkxzoRA0zCz2azjOBuXP9A90bm3ew/592ffbrx0hFLZ933HcXRDBUI4E67nMO5zIQRyJhgTnDFvy9Pbhm/evNzQolBFAolKVKayoqgSkSRCVFVXVS2bzZq6pshaOp12XfeB1Vu6xjo+6vyAvPnNXU2X6ymlAoWdtalMFUXmgrue63oOR8GR+Zwx5nvc2fHP/9De2XXorV2WFpQlRaayQhVKZUWSKZV1wyAoOY6bE7RAQCqd5oxvWvNQ5+jlDzt3k188++vGi0cIkea5ruv5nmboiNxnftbNMu77nHm+Z/tZbvmv/cs/HT7efOKd3+UaUVXWZEnWFE2mikIVTdXmMY8jkFBOwLW9TCZLAB+s3toxcvGDjt1k51+8d7h1LwgiKZQxls1kZEUmisQEc13H9rIe8xAxoOVUFFWuW/c5W4jrw93X49emklNO2pYlqqmqRg1F1RRF8V1fswxD07Ip27NdWZY3VT/UHm/7sOsDsu+1w28f3sU5SlQCQNu2Pd+jKuXAXd9hPrO0QFG4pLJ4aUGoEJM8HArnLSsQmhifnhgc6rvQcXY8OWbIhqLqAIQLHgwFZUrTsxnm+oZubK7+0sX4hQ87d5P2Nzte3/VD5AIBJEpcx0nbGSEJlATnnIIUsnJRYDqbcsFfu2lD5/lW65axomRtdfWqssWlM+5My6UzLR1nCJUklICSnFAOQcjMZUCAoRtb1m69cO33e7o/JH3/1v/SrleRCcY5SsiYl3EyrudwwjkKlWiVwaV3Fa83JWskOxZ7turM2eaug8dpKneBGqsuX/ng5ocKq2L7Gg7ta3yfAdMN0zB1YOg5HpVkXdO3rP3y+f6Wj3r2kKs/79vx61eQocdcQZAxL+tms06Gykrdso11tZsCzPJusJtTo93p7mU/uPfsxycH97REnDJJ830/Xa4v+7OXnsg4zs5f7exJXjJMU1Zk8AUgkamiq/qm6ofO9bcc+GQf6X3jkx3vvCoYd31HgPC5l3Uy5auXPf/VPy/MLsj02C3dF68M98xkptOB9Hd3/dWehuPndu4u1VdEAuEMTnseKyusWFf12VvTtw537LMlGwgQDgpVZCrrql63cvPFwXMH+w6Qtr+/+Nruv2PMdz3HE57P/RV3rHnp5RdjIvbuP+6ur2+IRcPBSGgyOzqQGfjrnW/cvDm47xdvqVPhBcEiQCbJkp3y1pRXL1u0rPnqid5kl888Ibgm6wpVDNXYuHLTxcHzRwcOk6a/PPmjhp/43Hdc2/Wd/ML8HS9/f8XKqvd2fXDwzYa1Vas0U26/denKVLdZvnD/R+91Xb/541dfG++Pry1eH7Wi01Nj3IPiSMkdS9YPzvafuFavUT3pJDRZ0xXD0IwNK+5v6z/XOFhPDjx36Kenfu4L33Gytmdv3/rEM1/9Vt9Y1/GLvx25cn1VaQ0UotCQUANQ+dOnXmjtnfzNj3fUrKtJjE+XierpmYnW9mM5C/RH7/9K/Fryv47uXr5gdf/0FQC0NMvQjPtW3n++7/fHBxvJb7b/59uX3vaFn3Wynu+8+fJbNKv1yyet2HV3fKCsZGlk4UJZ1SXZmr41BdGVH5wc5oP77934wFxydO66sTC3dt/Zvw1ElNrP3t/bnjh85OMvlN87mOibzIwFjaChmvetrDvfd/7EtUby081v7unb46PvuHbIyP3Z8zuPNdUfuPUfdevKAJw0S6m6KgEETWP16sX5ZXce2/1Wa2tXbGGJwyGT1L64+pmD598Impm0E1OypROzE7XFd6S9uUuj54J60FDNLy7f2DbQ1nzjBPnhhh83DB3iyNJu5guVdU/d89zr779UoC1clV/dOtx8avi4LZKI8qPbtn/ryYfLFoavnn3rjZ2naG7pyeZzKtUfW7/9WHt9WIqUh5fEIrGrU72fW3S3L9zjA4ctLWhoxkNrtrRcaW2+cZJ8f/3rp0ebOPK0l3qs5muriqpfP/jStqrHi83FjVcOn51o0nXLc70nX/h2Xd3dihj+fePR39Z3hqNFba2ng3rO+iV3tw22LLFWlkXLdF1vH7+0vebpkXT8QPfugB7QVeOJdY83dZ1outFEXvzs35y9dYIDt5n9YNXWkBl9v+29R1d8xSBWQ/ehTzId0UD++OxY3ea6R7Y9ourWmYvXm+t/Yyhqe9vl3EBewArOzibWRGor8pcKGc+PtPxg049ODx4/2rsvoAd11XjiM9ubupuabhwn3619pWX8FBLhcGfNgs/kBmJnB5q/vPoxinJ9+6Ehr78gUDQ0fb1mXc3jT3zVJ0r/8Nzx/b/UVeOTrquESoi8MmdZmVVZWbR0whl3s+7XNjz1duvOnlvtAT2oKdrXq7/W0NvYNHycfKf25daxUyCBj37UyC8OlXSNtm9d84hC1MZLDcPutfzQgvHZsYKKgm889fVb07MtrZ2TI12SJPf1XiWULDQXFRklC8OLcsOxztH2TRWbixcW/evxn7jM1nVTpepzNc/u7znQGG8kz9V878L4WYkSQRBQKgmVXkv0b675UlDOaW47mczOSAHkjNsR5+lnnk4kUyebWzOzwz6DsaHRwmBxVI4FaU5ZUeVIejjs59bdv7F/+Oq7H78T1AOapsmSsqP2xfc7dx+JHyHP1Xzv/NhZiSKl1GMsqIVnneSdyz5fnl/R2nV29maKm65HvKyR2fb0V3yfHzvWaGdmPBtJGkzJCkCwLG+JIMyf5Ru33hctjry7/52u/s6AHtBUnRL6/dpXftfx20PxA+Q7tS+3jJwilMuyyrgAQFlSAmZw692PDMfjDSfqlxRUzbGEyPHv3HY3AD/eWO9xNjebdSazMSW/NLRYQhl9fPBPNi2tqWhqPrH38F6ZUlXVVFWTkHy35tXdXe8eiR8kL9S+fG70NCFCVVWB4AkfABDx4Xsei0Zje/btkdK0IJiXosnKzZVUk0+dbmKcpaayckIJ6WFFUvJzFqyrXVdxZ+lAfODA/gOp7Jyu6qqiKaoqhHh+5Yt7un9XP3KUvFD9yvmx05IEiiojEJ8zJIJxVl645L47H5iYGDtx+piCSlgN53++QA7ILedO+4LxBEb8aNiMhM1IJCcSKggkxHRbZ5vtZimhumbIiqLKCmP8qcrn91/dfWysnny7+tVzY6eoBLIiE0KZ4IIILnwhYF3VXXesqe0funrp4uVkJll11worbJy/1OIKz0hbManA0E2FyhmWmmEJ27MFFxIQKsmapsmKQiXJc/3HS588Orj3xFQT2fGZ12/O3WDgu5hNs4zPPZCAI/O5T4m8tqp2ScnS2VTy6mB/RknnFAavDvT6wHAWdGGABAKYIimAwJGDIAQIJVTXNcvIKQ4tzMFAubx0/+BHpxLN5NHK7S5zNVmPmJG8cHQgMTCeviVAcMG44AhQkl+yrHyZqVvx+M3p7GQik/DBc21XAUWXTYkQ13c4cpgnABnqqr5hed2q0hXxidGB4d50MtWX7O/MdJI7C+/mQgABSqRIILo4UsY4uz43mPUzTHCBjCEnALmhaH640CCm5/u2mwEgHnPT7lzWzwAClSQqURSQK8e+vu6bw9n4mRvNs5mkbadcx+ECrjhXiWWGNKIF5GBIDQX0oK6oC6ziqBWLzw1NO1NCcAFCcOELhoiKolAiIQAgIYAEiEQkAiDLqkKV5bkrV4SqW0bOxO0hiULKTk2lJme9WQ89QZBoRgAAEFEGGtVj+VaeToyy3IpYMHZtZjDNUh5zBQqBAucBEiRAgACRPkWAyESOWLmLI4urcle1DbV1TbS7kpuwp6YyUz4y8ikAQnQzBwEBERAR0KJWnp4f1aLrF98FEsny1Hh6YsaexnkAhAAgINxGPqVSdVGkNGTmVkYrpmbHj3QdnXAmEt6UzWxCCJDbAMhtupUD8/A2mIeoEnWBtmBVXnVV4YqRdNzUAy63b82N+IIBIhCYhwCAENRyFkUWM/Q1qqwqXLO/Y3/n6OVJZ5ITTogEQOYBAQIEAIhhhQAAAQEBAQFv04leHqrYsuThTyY7BRWleWWyRK9NDWb9DHyKEFJgFeQFCqYz00knuWn5FoH+m6d/NjwbZ8DJpwDIPPgDQogRCME8hHkICPg/8gL5VeGVjy15pCdxJZ4eLI2WhY3IwGTfrD1DJXlh7qKYlXd9cgARv3HXkz03ew/27O8Z60mxOUIkIIQAKSouMFWlpDifKqrvc2IGwgh/gICAgIC3qZJaopcU5RTeUXFPULN6xjsUWS2LVYwkhkw9aCjGcCJeGi27a9XnGtqO9Y73TqTGB6YHGHBCCJXp5s33UElKJqZ831+9cnlhQYyYgTDC/0JEAEBABMQCeUFhsNCygjULa4sCRTemhybtsYr8yix3UvbMmqK1uTm5Z/qahxI35pzUUGIo4UwDIVbAuOcLa/Lyil3bCVhK/ObI1kfuP3u2jZiBMMIfw3mACAAUpYgSyQ8WhIxwRWRpiVVqu27fXGdJ3qLqRWsydvbCjQujcyPTdmJkdmTWnSWEBILmtofr5tKz3JeCoRwQ7pmPL8RHbwEAMQNhhD+GgACAiACA8wJyIN/KzzWiES262FoSM6OFsdi4P3rpxuWEPT2aHp1IT7rcJRKxLHPrgxs4cNPUy0vz6xs+vtjeY5r69NScFbCIGQgj/B8ICAgI8/A2hSi5Rm5RsFinRpFerCp0JHNzjs1N2LccyPrcTaWyVUuXPv74w5NTkzlB68C+Y5z7hJDO3qumpVUsWxq/FidmIIzw/0JAQEBABABEDMiBylilKZuAmPSTE+6Yw2xZoaZlzcwkFVUXvisRsD0HACRFNS0rP5bb1dFXVlY0OTZJzEAY4X8QAITbCADCPAQARCQAQEBwTolUGVvioT/DpoEgCp5fUDg3N5tKzamaqZvmXHKGSCCrOpGBEGlmIuk6rkaxoKjgvwHQ8H8q3AzATwAAAABJRU5ErkJggg==';
@@ -2835,6 +2955,7 @@ tbody tr:last-child td { border-bottom: none; }
     function visibleCrossBosses(){return crossBosses.filter(crossVisible);}
     function cleanCross(){const event=jstCrossActivity();const before=crossBosses.length;
         crossBosses=event.active?crossBosses.filter(b=>b.activityId===event.id):[];
+        pendingCrossOps=event.active?pendingCrossOps.filter(op=>op.activityId===event.id):[];
         if(before!==crossBosses.length){speakQueue=speakQueue.filter(q=>!q.cross);renderTable();}
     }
     function ocrMessage(message,good=false){const el=ocrEl('ocrSubmitMessage');el.textContent=message;el.style.display=message?'block':'none';el.style.background=good?'#12372b':'#422b22';el.style.borderColor=good?'#15803d':'#b45309';el.style.color=good?'#bbf7d0':'#fde68a';if(message)el.scrollIntoView({block:'nearest',behavior:'smooth'});}
@@ -3088,7 +3209,10 @@ tbody tr:last-child td { border-bottom: none; }
                 if(latest&&Date.parse(latest.time)>=Date.parse(r.spawn)){ignored++;continue;}
                 crossBosses=crossBosses.filter(b=>!(ocrNormalize(b.name)===key&&b.activityId===event.id));
                 const cfg=ocrCatalogMatch(r.name);
-                crossBosses.push({id:'cross_'+crypto.randomUUID(),name:cfg?.name||r.name,zone:cfg?.zone||getZone(r.name),time:r.spawn,interval:Number(cfg?.interval)||1,prob:Number(cfg?.prob)||0,scope:'cross',activityId:event.id});
+                const fresh={id:latest?.id||'cross_'+crypto.randomUUID(),name:cfg?.name||r.name,zone:cfg?.zone||getZone(r.name),time:r.spawn,interval:Number(cfg?.interval)||1,prob:Number(cfg?.prob)||0,scope:'cross',activityId:event.id};
+                if(latest){if(latest._localOnly)fresh._localOnly=true;stageCrossChange(latest,fresh);}
+                else {fresh._localOnly=true;const priorOp=pendingCrossOps.find(x=>x.before?.name===fresh.name&&x.activityId===event.id);if(priorOp)stageCrossChange({id:priorOp.id,name:fresh.name,activityId:event.id},fresh);}
+                crossBosses.push(fresh);
                 crossCount++;
             }else{
                 const key=ocrNormalize(r.name);
@@ -3167,9 +3291,10 @@ tbody tr:last-child td { border-bottom: none; }
             const name = inputName.value.trim();
             const defaultBoss = DEFAULT_BOSSES.find(b => b.name === name);
             if (!defaultBoss || !this.value) return;
-            const killDate = new Date(this.value);
-            const nextDate = new Date(killDate.getTime() + defaultBoss.interval * 60 * 60 * 1000);
-            inputTime.value = isoToLocalInputValue(nextDate.toISOString());
+            const killMs=Date.parse(localTimeToISO(this.value));
+            const hours=Number(inputInterval.value)||Number(defaultBoss.interval);
+            if(!Number.isFinite(killMs)||!Number.isFinite(hours)||hours<=0)return;
+            inputTime.value=isoToLocalInputValue(new Date(killMs+hours*3600000).toISOString());
         });
 
         volumeSlider.addEventListener('input', function() {
@@ -3190,6 +3315,7 @@ tbody tr:last-child td { border-bottom: none; }
     window.saveCloudSettings = saveCloudSettings; window.clearCloudSettings = clearCloudSettings;
     window.switchMode = switchMode; window.setTimezone = setTimezone;
     window.openAddModal = openAddModal; window.editBoss = editBoss;
+    window.editCrossBoss=editCrossBoss;window.delayCrossBoss=delayCrossBoss;window.recordCrossKill=recordCrossKill;window.delCrossBoss=delCrossBoss;
     window.saveBoss = saveBoss; window.closeModal = closeModal;
     window.resetDefaultData = resetDefaultData; window.recordKill = recordKill;
     window.delayBoss = delayBoss; window.delayAllPastUnupdated = delayAllPastUnupdated;
