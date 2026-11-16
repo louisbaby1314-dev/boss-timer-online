@@ -116,6 +116,71 @@ function uploadConflicts(incoming,old){
  }
  return conflicts;
 }
+// V4.5.1: manual cross edits are explicit, version-checked operations.
+// OCR rows retain the old latest-time-only merge, but cannot undo a manual edit/delete.
+function sameCrossRecord(a,b){
+  if(!a&&!b)return true;if(!a||!b)return false;
+  return ['name','time','interval','zone','prob','activityId'].every(k=>{
+    if(k==='interval'||k==='prob')return Number(a[k]??0)===Number(b[k]??0);
+    if(k==='time')return Date.parse(a[k])===Date.parse(b[k]);
+    return String(a[k]??'')===String(b[k]??'');
+  });
+}
+function prepareCrossUpload(incoming,old){
+  const act=jstActivity(),ops=incoming._crossOps===undefined?[]:incoming._crossOps;
+  if(!Array.isArray(ops)||ops.length>120)return {error:'跨服编辑记录无效或过多'};
+  if(ops.length&&!act.active)return {error:'跨服活动已结束，请重新下载后更新'};
+  const catalog=Array.isArray(old._catalog?.bosses)?old._catalog.bosses:old.bosses;
+  const byCatalog=new Map((catalog||[]).map(b=>[b.name,b]));
+  const current=Array.isArray(old._crossBosses)?old._crossBosses:[];
+  const byName=new Map(current.map(b=>[b.name,b]));
+  const locked=new Set(),seenIds=new Set();
+  const end=act.active?crossEventEndMs(act.id):NaN;
+  for(const op of ops){
+    if(!op||typeof op!=='object'||typeof op.id!=='string'||op.id.length>130||!op.id||seenIds.has(op.id))return {error:'跨服编辑操作不合法或重复'};
+    seenIds.add(op.id);
+    const before=op.before,after=op.after;
+    if(!before&&!after)return {error:'跨服编辑缺少记录'};
+    if(op.activityId!==act.id||before&&before.activityId!==act.id||after&&after.activityId!==act.id)
+      return {error:'跨服编辑属于旧活动，已停止上传'};
+    if(before&&(typeof before.name!=='string'||!before.name||before.name.length>150))return {error:'跨服原始名称无效'};
+    if(after&&(typeof after.name!=='string'||!after.name||after.name.length>150))return {error:'跨服新名称无效'};
+    const original=before?byName.get(before.name):null;
+    if(before&&!sameCrossRecord(original,before))return {error:'跨服「'+before.name+'」云端已经变化，请先从云端下载后核对'};
+    if(!before&&after&&byName.has(after.name))return {error:'跨服「'+after.name+'」已存在云端，不能作为新记录覆盖'};
+    if(before&&locked.has(before.name))return {error:'同一只跨服 Boss 存在多次冲突操作'};
+    if(before){byName.delete(before.name);locked.add(before.name);}
+    if(after){
+      const cfg=byCatalog.get(after.name);
+      const t=Date.parse(after.time||''),interval=Number(after.interval),prob=Number(after.prob);
+      if(!cfg)return {error:'跨服 Boss 未入库：'+after.name};
+      if(!Number.isFinite(t)||t>=end||t<Date.now()-86400000)return {error:'跨服「'+after.name+'」刷新时间无效或超过活动结束时间'};
+      if(!Number.isFinite(interval)||interval<=0||interval>720)return {error:'跨服「'+after.name+'」刷新间隔无效'};
+      if(!Number.isFinite(prob)||prob<0||prob>100||typeof after.zone!=='string'||after.zone.length>80)
+        return {error:'跨服「'+after.name+'」配置异常'};
+      if(byName.has(after.name))return {error:'跨服「'+after.name+'」已存在，不能重复更名'};
+      if(locked.has(after.name)&&after.name!==before?.name)return {error:'跨服编辑命名冲突：'+after.name};
+      const id=String(after.id||op.id);
+      if(id.length>130||!/^[a-zA-Z0-9_-]+$/.test(id))return {error:'跨服记录 ID 无效'};
+      byName.set(after.name,{id,name:after.name,time:new Date(t).toISOString(),interval,prob,zone:after.zone,scope:'cross',activityId:act.id});
+      locked.add(after.name);
+    }
+  }
+  // Legacy screenshot updates are latest-only. Only explicit ops may correct an earlier
+  // time, rename or delete a record; otherwise server-owned rows are preserved.
+  if(act.active)for(const b of Array.isArray(incoming._crossBosses)?incoming._crossBosses:[]){
+    if(!b||locked.has(b.name)||b.activityId!==act.id)continue;
+    const cfg=byCatalog.get(b.name),t=Date.parse(b.time||'');
+    if(!cfg||!Number.isFinite(t)||t>=end||t<Date.now()-86400000)continue;
+    const prior=byName.get(b.name);
+    if(!prior||Date.parse(prior.time)<t)byName.set(b.name,{
+      id:'cross_'+String(cfg.id||b.name).replace(/[^a-zA-Z0-9_]/g,'').slice(0,60),
+      name:b.name,time:new Date(t).toISOString(),interval:Number(cfg.interval),prob:Number(cfg.prob)||0,
+      zone:cfg.zone||'',scope:'cross',activityId:act.id
+    });
+  }
+  return {records:act.active?[...byName.values()]:[]};
+}
 async function uploadCheck(request,env,mode){
  if(request.method!=='POST')return json({error:'Method not allowed'},405);
  if(!sameOrigin(request)||!(await isAuthenticated(request,env)))return json({error:'请先登录管理员'},401);
@@ -124,8 +189,9 @@ async function uploadCheck(request,env,mode){
  const issue=validateBossData(incoming);if(issue)return json({error:issue},400);
  const row=await env.BOSS_DB.prepare('SELECT payload,updated_at FROM boss_state WHERE mode=?').bind(mode).first();
  if(!row)return json({error:'云端记录不存在'},409);
- const prior=JSON.parse(row.payload);
- return json({ok:true,revision:row.updated_at,conflicts:uploadConflicts(incoming,prior)});
+  const prior=JSON.parse(row.payload);filterCross(prior);
+  const cross=prepareCrossUpload(incoming,prior);if(cross.error)return json({error:cross.error},409);
+  return json({ok:true,revision:row.updated_at,conflicts:uploadConflicts(incoming,prior)});
 }
 async function undoUpload(request,env,mode){
  if(request.method!=='POST')return json({error:'Method not allowed'},405);
@@ -153,7 +219,7 @@ export async function onRequest({request,env}) {
   const action = url.searchParams.get('action');
   if (action === 'login' || action === 'logout' || action === 'session') return authRequest(request,env,action);
   if (action === 'ocr-apply') { const mode=url.searchParams.get('mode'); return MODES.has(mode)?applyOcrBatch(request,env,mode):json({error:'Invalid mode'},400); }
-  if (action === 'cross-delay') { const mode=url.searchParams.get('mode'); return MODES.has(mode)?delayCrossBatch(request,env,mode):json({error:'Invalid mode'},400); }
+  if (action === 'cross-delay') return json({error:'请升级至 V4.5.1：跨服批量顺延现在只更新本地，需手动上传'},409);
   if(action==='upload-check'||action==='undo-upload'){const mode=url.searchParams.get('mode');return MODES.has(mode)?(action==='upload-check'?uploadCheck(request,env,mode):undoUpload(request,env,mode)):json({error:'Invalid mode'},400);}
   if (action === 'storage-status') return storageStatus(request,env);
   if (action === 'catalog-mutate' || action === 'reset-both') return changeBothModes(request,env,action);
@@ -176,43 +242,36 @@ export async function onRequest({request,env}) {
         // If either mode is unseeded, stop writes rather than clobbering it.
         const row=await env.BOSS_DB.prepare('SELECT mode FROM boss_state WHERE mode=?').bind(mode).first();
         if(!row) return json({error:'D1 mode not imported yet; open /migrate-d1.html first',mode},409);
-        // Manual sync: merge current-event staged cross records by Boss name.
-        // Never let stale tabs delete server cross records, revive old events, or overwrite newer timestamps.
+        // Merge against the exact D1 revision checked by the admin; never let an old
+        // browser tab blindly replace server rows or undo a concurrent cross edit.
         const oldRow=await env.BOSS_DB.prepare('SELECT payload,updated_at FROM boss_state WHERE mode=?').bind(mode).first();
         if(!oldRow||!data._expectedRevision||oldRow.updated_at!==data._expectedRevision)return json({error:'云端版本已变化，请重新检查后上传'},409);
-        const unsafe=uploadConflicts(data,JSON.parse(oldRow.payload));
-        if(unsafe.length)return json({error:'发现旧数据可能覆盖云端：'+unsafe.map(x=>x.name).slice(0,8).join('、')},409);
-        delete data._expectedRevision;
-        if(oldRow){
-          const old=JSON.parse(oldRow.payload);filterCross(old);
-          const act=jstActivity();const byName=new Map((old._crossBosses||[]).map(b=>[b.name,b]));
-          const catalog=Array.isArray(old._catalog?.bosses)?old._catalog.bosses:old.bosses;
-          const catalogByName=new Map((catalog||[]).map(b=>[b.name,b]));
-          if(act.active){
-            for(const b of Array.isArray(data._crossBosses)?data._crossBosses:[]){
-              const cfg=catalogByName.get(b?.name);
-              const t=Date.parse(b?.time||'');
-              if(!cfg||b?.activityId!==act.id||!Number.isFinite(t)||t>=crossEventEndMs(act.id)||t<Date.now()-86400000)continue;
-              const prior=byName.get(b.name);
-              if(!prior||Date.parse(prior.time)<t){
-                byName.set(b.name,{id:'cross_'+String(cfg.id||b.name).replace(/[^a-zA-Z0-9_]/g,'').slice(0,60),
-                  name:b.name,time:new Date(t).toISOString(),interval:Number(cfg.interval),prob:Number(cfg.prob)||0,
-                  zone:cfg.zone||'',scope:'cross',activityId:act.id});
-              }
-            }
-          }
-          data._crossBosses=[...byName.values()];
-        }
+        const old=JSON.parse(oldRow.payload);filterCross(old);
+        const unsafe=uploadConflicts(data,old);
+        if(unsafe.length)return json({error:'发现旧本服数据可能覆盖云端：'+unsafe.map(x=>x.name).slice(0,8).join('、')},409);
+        const crossResult=prepareCrossUpload(data,old);
+        if(crossResult.error)return json({error:crossResult.error},409);
+        data._crossBosses=crossResult.records;
+        delete data._crossOps;delete data._expectedRevision;
         filterCross(data);
         await ensureUndoTable(env.BOSS_DB);
         const revision=new Date().toISOString()+'-'+crypto.randomUUID();
         // D1 batch keeps the last-upload snapshot and the new state together.
+        // D1 batch executes these statements in one transaction. Update the state FIRST;
+        // only create an undo snapshot when that exact revision was successfully written.
+        // A stale-tab CAS failure (0 changed rows) must never damage a valid undo snapshot.
         const writeResults=await env.BOSS_DB.batch([
-          env.BOSS_DB.prepare('INSERT INTO boss_last_upload(mode,before_payload,after_revision,created_at) VALUES(?,?,?,?) ON CONFLICT(mode) DO UPDATE SET before_payload=excluded.before_payload,after_revision=excluded.after_revision,created_at=excluded.created_at').bind(mode,oldRow.payload,revision,new Date().toISOString()),
-          env.BOSS_DB.prepare('UPDATE boss_state SET payload=?,updated_at=? WHERE mode=? AND updated_at=?').bind(JSON.stringify(data),revision,mode,oldRow.updated_at)
+          env.BOSS_DB.prepare('UPDATE boss_state SET payload=?,updated_at=? WHERE mode=? AND updated_at=?').bind(JSON.stringify(data),revision,mode,oldRow.updated_at),
+          env.BOSS_DB.prepare(`INSERT INTO boss_last_upload(mode,before_payload,after_revision,created_at)
+            SELECT ?,?,?,? WHERE EXISTS
+            (SELECT 1 FROM boss_state WHERE mode=? AND updated_at=?)
+            ON CONFLICT(mode) DO UPDATE SET before_payload=excluded.before_payload,
+              after_revision=excluded.after_revision,created_at=excluded.created_at`)
+            .bind(mode,oldRow.payload,revision,new Date().toISOString(),mode,revision)
         ]);
-        if((writeResults[1]?.meta?.changes??0)!==1)return json({error:'上传时云端已变化，未覆盖云端，请重试'},409);
-        return json({ok:true,mode,updatedAt:data.updatedAt||null,storage:'d1'});
+        if((writeResults[0]?.meta?.changes??0)!==1)return json({error:'上传时云端已变化，未覆盖云端，请重试'},409);
+        if((writeResults[1]?.meta?.changes??0)!==1)return json({error:'上传状态已写入，但撤销快照异常；请停止上传并检查云端'},503);
+        return json({ok:true,mode,updatedAt:data.updatedAt||null,storage:'d1',crossBosses:visibleCross(data)});
       } catch(e) {return json({error:'D1 write failed',detail:safeD1Error(e)},503);}
     }
     return writeJsonbin(env,mode,data);
