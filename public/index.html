@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- V4.5.2: Cross-server mandatory 100% Boss styling matches local Boss -->
+<!-- V4.5.4: Admin multi-tab voice leadership; retains V4.5.3 overwrite confirmation and V4.5.2 styles -->
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -1111,6 +1111,7 @@ tbody tr:last-child td { border-bottom: none; }
     let speakQueue = [];
     let speakWakeTimer = null; // 到点前预入队，真正刷新时才播放
     let isSpeaking = false;
+    let activeSpeechToken = 0; // 避免关闭/切换主页面后旧回调阻塞新一轮语音
     let audioCtx = null;
     let toastTimer = null;
     let uploadEnabled = false;
@@ -1270,49 +1271,104 @@ tbody tr:last-child td { border-bottom: none; }
         localStorage.setItem(getStorageKey(), JSON.stringify(dataToSave));
     }
 
-    // ===== 区服负责人机制：多页面各管一区，避免同一 Boss 被播报两遍 =====
-    const PAGE_ID = 'pg' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-    const ownerKey = (m) => 'bossData_owner_' + m;
+    // ===== V4.5.4: 浏览器内所有管理员标签页共用一个自动语音播报者 =====
+    // Web Locks 由浏览器保证互斥；关闭当前播报页后锁会自动释放。
+    // 不支持 Web Locks 的浏览器使用短期本地租约作为兼容方案。
+    const PAGE_ID = 'pg' + Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
+    const VOICE_LOCK_NAME = 'boss-timer-admin-voice-exclusive-v454';
+    const VOICE_LEASE_KEY = 'boss-timer-admin-voice-lease-v454';
+    let isVoiceLeader = false;
+    let voiceLeaderGeneration = 0;
+    let voiceLockBusy = false;
+    let releaseVoiceLock = null;
+    let voiceLockSupport = !!(navigator.locks && typeof navigator.locks.request === 'function');
+    let voiceLeavingPage = false;
 
-    function getOwner(m) {
+    function adoptSpokenCyclesFromStorage() {
         try {
-            const raw = localStorage.getItem(ownerKey(m));
-            if (!raw) return null;
-            const o = JSON.parse(raw);
-            if (!o || !o.pid) return null;
-            if (Date.now() - (o.ts || 0) > 30000) return null; // 心跳过期（页面已关闭）
-            return o;
-        } catch (e) { return null; }
+            const list = JSON.parse(localStorage.getItem('bossV445_spoken_cycles') || '[]');
+            for (const [key, value] of list) {
+                if (!spokenCycles.has(key) || spokenCycles.get(key) < value) spokenCycles.set(key, value);
+            }
+        } catch (_) { /* 已有内存状态仍然有效 */ }
     }
 
-    function claimZone(m) {
+    function setVoiceLeader(next) {
+        if (isVoiceLeader === next) return;
+        isVoiceLeader = next;
+        voiceLeaderGeneration += 1; // 旧语音的异步回调不可影响新一任播报者
+        if (next) {
+            adoptSpokenCyclesFromStorage();
+            // 接替后使用当前两区数据继续检查；不会重播已有的刷新轮次。
+            if (reminderEnabled) checkAndSpeak();
+        } else {
+            // 失去资格的标签页不能保留自动播报队列。
+            speakQueue = [];
+            clearTimeout(speakWakeTimer);
+            speakWakeTimer = null;
+            activeSpeechToken += 1;
+            clearTimeout(window.__speakGuard);
+            const shouldCancelSpeech = isSpeaking;
+            isSpeaking = false;
+            if (shouldCancelSpeech && 'speechSynthesis' in window) {
+                try { window.speechSynthesis.cancel(); } catch (_) {}
+            }
+        }
+    }
+
+    function tryBecomeVoiceLeader() {
+        if (voiceLeavingPage || !reminderEnabled) return;
+        if (voiceLockSupport) {
+            if (voiceLockBusy || isVoiceLeader) return;
+            voiceLockBusy = true;
+            navigator.locks.request(VOICE_LOCK_NAME, { mode: 'exclusive', ifAvailable: true }, async lock => {
+                if (!lock || voiceLeavingPage || !reminderEnabled) return;
+                await new Promise(resolve => {
+                    releaseVoiceLock = resolve;
+                    setVoiceLeader(true);
+                });
+                releaseVoiceLock = null;
+                setVoiceLeader(false);
+            }).catch(error => {
+                console.warn('语音主页面锁不可用，使用兼容模式', error);
+                voiceLockSupport = false;
+            }).finally(() => { voiceLockBusy = false; });
+            return;
+        }
+        // 兼容旧浏览器：使用 5 秒租约，抢占后读回检查归属。
         try {
-            const o = getOwner(m);
-            if (o && o.pid !== PAGE_ID) return false; // 该区已有其他活跃页面负责
-            localStorage.setItem(ownerKey(m), JSON.stringify({ pid: PAGE_ID, ts: Date.now() }));
-            return true;
-        } catch (e) { return false; }
+            const now = Date.now();
+            const prior = JSON.parse(localStorage.getItem(VOICE_LEASE_KEY) || 'null');
+            if (!prior || prior.until < now || prior.pid === PAGE_ID) {
+                localStorage.setItem(VOICE_LEASE_KEY, JSON.stringify({ pid: PAGE_ID, until: now + 5000 }));
+                const current = JSON.parse(localStorage.getItem(VOICE_LEASE_KEY) || 'null');
+                setVoiceLeader(current?.pid === PAGE_ID);
+            } else {
+                setVoiceLeader(false);
+            }
+        } catch (error) {
+            console.warn('语音主页面租约不可用', error);
+            setVoiceLeader(false);
+        }
     }
 
-    function heartbeatZones() {
-        ['new', 'old'].forEach(m => {
+    function releaseVoiceLeadership() {
+        if (releaseVoiceLock) releaseVoiceLock();
+        if (!voiceLockSupport) {
             try {
-                const o = getOwner(m);
-                if (o && o.pid === PAGE_ID) {
-                    localStorage.setItem(ownerKey(m), JSON.stringify({ pid: PAGE_ID, ts: Date.now() }));
-                }
-            } catch (e) { /* ignore */ }
-        });
+                const lease = JSON.parse(localStorage.getItem(VOICE_LEASE_KEY) || 'null');
+                if (lease?.pid === PAGE_ID) localStorage.removeItem(VOICE_LEASE_KEY);
+            } catch (_) {}
+        }
+        setVoiceLeader(false);
     }
 
-    function releaseZones() {
-        ['new', 'old'].forEach(m => {
-            try {
-                const o = getOwner(m);
-                if (o && o.pid === PAGE_ID) localStorage.removeItem(ownerKey(m));
-            } catch (e) { /* ignore */ }
-        });
-    }
+    // 只在页面真正关闭或进入页面缓存时退出；只是切换标签不丢提醒。
+    window.addEventListener('pagehide', () => { voiceLeavingPage = true; releaseVoiceLeadership(); });
+    window.addEventListener('pageshow', () => { voiceLeavingPage = false; tryBecomeVoiceLeader(); });
+    window.addEventListener('storage', e => {
+        if (e.key === VOICE_LEASE_KEY && !voiceLockSupport) tryBecomeVoiceLeader();
+    });
 
     function switchMode(newMode) {
         if (newMode === mode) return;
@@ -1332,9 +1388,6 @@ tbody tr:last-child td { border-bottom: none; }
             bosses = DEFAULT_BOSSES.map(b => ({ ...b, id: b.id || 'b' + Date.now() + Math.random() }));
             saveData();
         }
-
-        // 切换到新区后，认领当前页负责的区
-        claimZone(newMode);
 
         refreshTimezoneButtons();
         renderTable();
@@ -1474,10 +1527,13 @@ tbody tr:last-child td { border-bottom: none; }
     }
 
     function speakBossAlert(bossName, alertMode, isCross=false, onStarted=null, onFinished=null) {
+        const mySpeechToken = ++activeSpeechToken;
         let settled=false, started=false;
         const finish=ok=>{
             if(settled)return;
-            settled=true;clearTimeout(window.__speakGuard);
+            settled=true;
+            if (mySpeechToken !== activeSpeechToken) return; // 旧 utterance 的结束事件不能打断新语音
+            clearTimeout(window.__speakGuard);
             isSpeaking=false;
             if(onFinished)onFinished(ok && started);
             if(speakQueue.length)setTimeout(processSpeakQueue,250);
@@ -1561,6 +1617,7 @@ tbody tr:last-child td { border-bottom: none; }
     document.addEventListener('visibilitychange',()=>{if(!document.hidden){refreshOtherZoneForAlerts();retireStaleSpeakTasks();}});
 
     function processSpeakQueue() {
+        if (!isVoiceLeader) { speakQueue = []; return; }
         if (isSpeaking) return;
         clearTimeout(speakWakeTimer);speakWakeTimer=null;
         if (!speakQueue.length) return;
@@ -1571,16 +1628,23 @@ tbody tr:last-child td { border-bottom: none; }
             speakWakeTimer=setTimeout(processSpeakQueue,Math.max(20,next-now));return;
         }
         const item=speakQueue.splice(idx,1)[0];
+        if (item.manual) {
+            isSpeaking = true;
+            speakBossAlert(item.name,item.mode,!!item.cross,()=>showDueGlass(item.name,item.mode));
+            return;
+        }
         if(!item.name||spokenCycles.has(item.key)){if(speakQueue.length)setTimeout(processSpeakQueue,10);return;}
         const source=getAllRemindableBosses().find(b=>reminderCycleKey(b,item.lead)===item.key);
         if(!source || (item.cross&&!crossVisible(source))){
             if(speakQueue.length)setTimeout(processSpeakQueue,10);return;
         }
         isSpeaking=true;
+        const currentVoiceGeneration = voiceLeaderGeneration;
         // Only a completed speech counts as delivered; failed utterances retry at most twice.
         speakBossAlert(item.name,item.mode,!!item.cross,()=>{
             showDueGlass(item.name,item.mode);
         },(success)=>{
+            if (!isVoiceLeader || voiceLeaderGeneration !== currentVoiceGeneration) return; // 旧语音回调不影响接任者
             if(success){
                 if(!spokenCycles.has(item.key)){
                     markCycleSpoken(item.key);
@@ -1615,13 +1679,12 @@ tbody tr:last-child td { border-bottom: none; }
     }
 
     function checkAndSpeak() {
+        if (!isVoiceLeader || !reminderEnabled) return;
         const now=Date.now(), lead=parseInt(remindMinutesSelect.value)||1000;
         const onDue=lead===1000;
         const allBosses=getAllRemindableBosses();
         for(const b of allBosses){
             if(!b.time||!b.id)continue;
-            const owner=getOwner(b._mode);
-            if(owner&&owner.pid!==PAGE_ID)continue;
             const t=Date.parse(b.time);
             if(!Number.isFinite(t))continue;
             const cross=!!b._cross;
@@ -2529,6 +2592,8 @@ tbody tr:last-child td { border-bottom: none; }
         statusDot.className = reminderEnabled ? 'status-dot' : 'status-dot paused';
         statusText.textContent = reminderEnabled ? '运行中' : '已暂停';
         toggleBtn.textContent = reminderEnabled ? '⏸ 暂停' : '▶ 继续';
+        if (!reminderEnabled) releaseVoiceLeadership();
+        else tryBecomeVoiceLeader();
     }
 
     function clearAllReminded() {
@@ -2609,6 +2674,7 @@ tbody tr:last-child td { border-bottom: none; }
     }
 
     function testAlert() {
+        if (isSpeaking) return showToast('🔊 正在播放 Boss 提醒，请播放结束后再测试');
         playAlertSound(parseInt(volumeSlider.value));
         speakBossAlert('测试');
         showDueGlass('测试', mode);
@@ -2617,9 +2683,13 @@ tbody tr:last-child td { border-bottom: none; }
     function manualRemind(id) {
         const b = bosses.find(x => x.id === id);
         if (!b) return;
-        const key = mode + '|' + id;
-        if (!speakQueue.some(q => q.key === key)) speakQueue.push({ key: key, id: id, name: b.name, mode: mode });
-        if (!isSpeaking) processSpeakQueue();
+        // 手动点击是用户明确触发的试听，不参与自动提醒去重。
+        if (isVoiceLeader) {
+            speakQueue.push({manual:true,name:b.name,mode:mode,cross:false});
+            if (!isSpeaking) processSpeakQueue();
+        } else if (!isSpeaking) {
+            speakBossAlert(b.name,mode,false,()=>showDueGlass(b.name,mode));
+        }
     }
 
     function showToast(msg) {
@@ -3300,10 +3370,9 @@ tbody tr:last-child td { border-bottom: none; }
         renderTable();
         setInterval(updateClock, 1000);
 
-        // 区服负责人机制：认领当前区 + 心跳保活 + 页面关闭释放
-        claimZone(mode);
-        setInterval(heartbeatZones, 10000);
-        window.addEventListener('beforeunload', releaseZones);
+        // 每个管理员页面都监控两区；只有全局播报主页面才执行自动语音。
+        tryBecomeVoiceLeader();
+        setInterval(tryBecomeVoiceLeader, 1000);
 
         inputKillTime.addEventListener('change', function() {
             const name = inputName.value.trim();
