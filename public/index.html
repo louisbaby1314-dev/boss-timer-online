@@ -3276,20 +3276,49 @@ tbody tr:last-child td { border-bottom: none; }
     }
     function ocrSubmit(){
         ocrMessage('');
-        const chosen=ocrRowsData.filter(r=>r.checked);
-        if(!chosen.length){ocrMessage('没有勾选任何 Boss。请先勾选需要更新的记录。');return;}
         const event=jstCrossActivity();
-        const prohibited=chosen.filter(r=>r.scope==='cross'&&(!event.active||Date.parse(r.spawn)>=crossEventEndMs(event.id)));
-        if(prohibited.length){ocrMessage('跨服活动已结束或刷新时间超过活动截止：'+prohibited.map(r=>r.name).join('、')+'。请取消勾选后再更新。');return;}
-        const invalid=chosen.filter(r=>!r.killed||!r.spawn||!Number.isFinite(Date.parse(r.spawn)));
+        const end=event.active?crossEventEndMs(event.id):NaN;
+        const chosen=ocrRowsData.filter(r=>r.checked);
+        // A single out-of-window cross-server row must never cancel the whole OCR batch.
+        const prohibited=chosen.filter(r=>r.scope==='cross'&&(!event.active||!Number.isFinite(Date.parse(r.spawn))||Date.parse(r.spawn)>=end));
+        const eligible=chosen.filter(r=>!prohibited.includes(r));
+        const invalid=eligible.filter(r=>!r.killed||!r.spawn||!Number.isFinite(Date.parse(r.spawn)));
         if(invalid.length){ocrMessage('以下记录缺少有效时间：'+invalid.map(r=>r.name).join('、')+'。请取消勾选或重新识别。');return;}
-        const dubious=chosen.filter(r=>!r.valid);
+        const dubious=eligible.filter(r=>!r.valid);
         if(dubious.length&&!confirm('你选择了 '+dubious.length+' 条需要核对的记录，仍要写入当前页面吗？'))return;
-        // Only local state changes here. Cloud is updated exclusively by the original floating sync button.
+
+        // If a trustworthy OCR row says the next cross-server spawn is past 01:00 JST,
+        // retire the *older* displayed record for that same activity and Boss.
+        // Never do this for unknown names, invalid time pairs or a future kill time.
+        // Such rows are normally unchecked by default, so handle them independently.
+        const expiredRows=event.active?ocrRowsData.filter(r=>{
+            if(r.scope!=='cross'||!ocrCatalogMatch(r.name))return false;
+            const kill=Date.parse(r.killed||''),spawn=Date.parse(r.spawn||'');
+            const interval=Number(ocrCatalogMatch(r.name)?.interval);
+            return Number.isFinite(kill)&&Number.isFinite(spawn)&&Number.isFinite(interval)&&interval>0
+                &&kill<=Date.now()+10*60000&&Math.abs((spawn-kill)/3600000-interval)<1/120
+                &&spawn>=end;
+        }):[];
+        if(!eligible.length&&!expiredRows.length){
+            ocrMessage(prohibited.length?'选中的跨服 Boss 都超过活动截止时间，本次没有可更新的记录。':'没有可更新的 Boss。请先勾选需要更新的记录。');return;
+        }
         const currentMode=mode;
-        let localCount=0,crossCount=0,ignored=0;
+        let localCount=0,crossCount=0,ignored=prohibited.length,retired=0;
         pushUndo('OCR 本地更新前');
-        for(const r of chosen){
+        // Only retire existing entries when the screenshot provides a newer valid defeat.
+        for(const r of expiredRows){
+            const key=ocrNormalize(r.name),killed=Date.parse(r.killed);
+            for(const old of [...crossBosses]){
+                if(old.activityId!==event.id||ocrNormalize(old.name)!==key)continue;
+                const oldKill=Date.parse(old.time)-Number(old.interval)*3600000;
+                if(Number.isFinite(oldKill)&&killed<oldKill)continue;
+                stageCrossChange(old,null);
+                crossBosses=crossBosses.filter(b=>b.id!==old.id);
+                invalidateCrossSpeakTask(old.id);
+                retired++;
+            }
+        }
+        for(const r of eligible){
             if(r.scope==='cross'){
                 const key=ocrNormalize(r.name);
                 const matching=crossBosses.filter(b=>ocrNormalize(b.name)===key&&b.activityId===event.id);
@@ -3313,7 +3342,7 @@ tbody tr:last-child td { border-bottom: none; }
             }
         }
         saveData();renderTable();ocrClose();
-        showToast('✅ 已更新当前'+(currentMode==='new'?'新区':'老区')+'页面：本服 '+localCount+'、跨服 '+crossCount+' 条'+(ignored?'；跳过较旧或未入库 '+ignored+' 条':'')+'。尚未上传 D1，请使用原悬浮上传按钮。');
+        showToast('✅ 已处理当前'+(currentMode==='new'?'新区':'老区')+'：本服更新 '+localCount+'、跨服更新 '+crossCount+'、过期跨服清除 '+retired+' 条'+(ignored?'；跳过超时／较旧／未入库 '+ignored+' 条':'')+'。尚未上传 D1，请点击悬浮上传按钮。');
     }
     ocrEl('ocrFile').addEventListener('change',e=>ocrReceive(e.target.files[0]));
     ocrEl('ocrOverlay').addEventListener('dragover',e=>{if([...(e.dataTransfer?.types||[])].includes('Files'))e.preventDefault();});
