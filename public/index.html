@@ -3309,9 +3309,16 @@ tbody tr:last-child td { border-bottom: none; }
         for(const r of expiredRows){
             const key=ocrNormalize(r.name),killed=Date.parse(r.killed);
             for(const old of [...crossBosses]){
-                if(old.activityId!==event.id||ocrNormalize(old.name)!==key)continue;
-                const oldKill=Date.parse(old.time)-Number(old.interval)*3600000;
-                if(Number.isFinite(oldKill)&&killed<oldKill)continue;
+                // Only remove the matching cross-server record of this event, never the local Boss.
+                const oldName=ocrCatalogMatch(old.name)?.name||old.name;
+                const recognizedName=ocrCatalogMatch(r.name)?.name||r.name;
+                if(old.activityId!==event.id||ocrNormalize(oldName)!==ocrNormalize(recognizedName))continue;
+                const oldSpawn=Date.parse(old.time||'');
+                if(!Number.isFinite(oldSpawn)||oldSpawn>Date.parse(r.spawn))continue;
+                // Do not let an older screenshot retire a record with a newer defeat.
+                const oldInterval=Number(old.interval);
+                const oldKill=oldSpawn-(Number.isFinite(oldInterval)&&oldInterval>0?oldInterval:0)*3600000;
+                if(killed<oldKill)continue;
                 stageCrossChange(old,null);
                 crossBosses=crossBosses.filter(b=>b.id!==old.id);
                 invalidateCrossSpeakTask(old.id);
@@ -3342,7 +3349,7 @@ tbody tr:last-child td { border-bottom: none; }
             }
         }
         saveData();renderTable();ocrClose();
-        showToast('✅ 已处理当前'+(currentMode==='new'?'新区':'老区')+'：本服更新 '+localCount+'、跨服更新 '+crossCount+'、过期跨服清除 '+retired+' 条'+(ignored?'；跳过超时／较旧／未入库 '+ignored+' 条':'')+'。尚未上传 D1，请点击悬浮上传按钮。');
+        showToast('✅ 跨服清理修复 v2｜'+(currentMode==='new'?'新区':'老区')+'：本服更新 '+localCount+'、跨服更新 '+crossCount+'、过期跨服清除 '+retired+' 条'+(ignored?'；跳过超时／较旧／未入库 '+ignored+' 条':'')+'。尚未上传 D1，请点击悬浮上传按钮。');
     }
     ocrEl('ocrFile').addEventListener('change',e=>ocrReceive(e.target.files[0]));
     ocrEl('ocrOverlay').addEventListener('dragover',e=>{if([...(e.dataTransfer?.types||[])].includes('Files'))e.preventDefault();});
